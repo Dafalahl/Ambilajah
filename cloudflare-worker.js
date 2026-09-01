@@ -93,18 +93,37 @@ async function decryptSession(token) {
 }
 
 function parseCookiesFromHeaders(headers) {
-  const cookies = [];
-  const setCookie = headers.get('set-cookie');
-  if (setCookie) {
-    const parts = setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/);
-    for (const p of parts) {
-      const match = p.match(/^([a-zA-Z0-9_-]+)=([^;]+)/);
-      if (match) {
-        cookies.push(`${match[1]}=${match[2]}`);
+  const map = new Map();
+  let rawList = [];
+
+  if (typeof headers.getSetCookie === 'function') {
+    rawList = headers.getSetCookie();
+  } else if (typeof headers.getAll === 'function') {
+    rawList = headers.getAll('set-cookie');
+  } else {
+    const raw = headers.get('set-cookie') || '';
+    rawList = raw ? [raw] : [];
+  }
+
+  for (const h of rawList) {
+    const firstPart = h.split(';')[0];
+    if (firstPart) {
+      const idx = firstPart.indexOf('=');
+      if (idx !== -1) {
+        const key = firstPart.substring(0, idx).trim();
+        const val = firstPart.substring(idx + 1).trim();
+        if (key && val) {
+          map.set(key, val);
+        }
       }
     }
   }
-  return cookies.join('; ');
+
+  const out = [];
+  for (const [k, v] of map.entries()) {
+    out.push(`${k}=${v}`);
+  }
+  return out.join('; ');
 }
 
 function mergeCookieStrings(oldCookies = '', newCookies = '') {
@@ -305,13 +324,28 @@ export default {
         let html = '';
 
         for (const r of routes) {
-          const resp = await fetch(`${LMS_ORIGIN}${r}`, {
+          let resp = await fetch(`${LMS_ORIGIN}${r}`, {
             headers: {
               'Cookie': session.cookies,
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             },
             redirect: 'manual',
           });
+
+          // Follow redirect if redirected to /dashboard or /courses
+          if (resp.status === 302 || resp.status === 301 || resp.status === 303) {
+            const redirectLoc = resp.headers.get('location');
+            if (redirectLoc && !redirectLoc.includes('/login')) {
+              const fullRedirect = redirectLoc.startsWith('http') ? redirectLoc : `${LMS_ORIGIN}${redirectLoc}`;
+              resp = await fetch(fullRedirect, {
+                headers: {
+                  'Cookie': session.cookies,
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                },
+                redirect: 'manual',
+              });
+            }
+          }
 
           if (resp.status === 200) {
             const txt = await resp.text();

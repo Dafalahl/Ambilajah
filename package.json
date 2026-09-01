@@ -1,0 +1,25 @@
+{
+  "name": "ambilajah",
+  "version": "1.0.0",
+  "description": "Download materi kuliah dari LMS dosen — AmbilAjah",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "lms",
+    "scraper",
+    "course",
+    "downloader"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.20.0",
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1",
+    "set-cookie-parser": "^3.1.2",
+    "tough-cookie": "^6.0.2"
+  }
+}

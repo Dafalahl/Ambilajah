@@ -9,6 +9,13 @@ let currentCourses = [];
 let currentMaterials = [];
 let currentCourseName = '';
 
+// On Vercel / Cloud, call Cloudflare Worker API directly from browser (bypasses all datacenter WAF blocks)
+// On local dev, call local Express server
+const CLOUD_API_BASE = 'https://ambilajah-proxy.donateme.workers.dev';
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? ''
+  : CLOUD_API_BASE;
+
 // --- API Request Helper ---
 async function api(method, endpoint, body = null) {
   const options = {
@@ -26,7 +33,7 @@ async function api(method, endpoint, body = null) {
     options.body = JSON.stringify(body);
   }
 
-  const response = await fetch(endpoint, options);
+  const response = await fetch(API_BASE + endpoint, options);
   let data;
   try {
     data = await response.json();
@@ -352,6 +359,54 @@ async function loadMaterials(courseUrl) {
 }
 
 // --- DIRECT INSTANT DOWNLOAD FLOW ---
+function downloadFileHelper(data) {
+  if (data.content) {
+    const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = data.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+  } else {
+    const downloadLink = document.createElement('a');
+    downloadLink.href = `/api/downloads/${encodeURIComponent(data.filename)}`;
+    downloadLink.download = data.filename;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+  }
+}
+
+function previewFileHelper(data) {
+  if (data.content) {
+    const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const newTab = window.open(blobUrl, '_blank');
+    if (!newTab) {
+      const tempLink = document.createElement('a');
+      tempLink.href = blobUrl;
+      tempLink.target = '_blank';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+    }
+  } else {
+    const cleanFileUrl = `/api/downloads/${encodeURIComponent(data.filename)}`;
+    const newTab = window.open(cleanFileUrl, '_blank');
+    if (!newTab) {
+      const tempLink = document.createElement('a');
+      tempLink.href = cleanFileUrl;
+      tempLink.target = '_blank';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+    }
+  }
+}
+
 async function triggerDirectDownload(index) {
   const material = currentMaterials[index];
   if (!material) return;
@@ -369,13 +424,8 @@ async function triggerDirectDownload(index) {
       title: material.title,
     });
 
-    // Directly trigger browser download to user's disk!
-    const downloadLink = document.createElement('a');
-    downloadLink.href = `/api/downloads/${encodeURIComponent(data.filename)}`;
-    downloadLink.download = data.filename;
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    downloadLink.remove();
+    // Directly trigger browser download!
+    downloadFileHelper(data);
 
     btn.innerHTML = '<span>✅ Terunduh!</span>';
     btn.classList.remove('btn-primary');
@@ -428,12 +478,7 @@ async function downloadAllMaterials() {
       });
 
       // Trigger direct file download in browser
-      const downloadLink = document.createElement('a');
-      downloadLink.href = `/api/downloads/${encodeURIComponent(data.filename)}`;
-      downloadLink.download = data.filename;
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      downloadLink.remove();
+      downloadFileHelper(data);
 
       if (matBtn) {
         matBtn.innerHTML = '<span>✅</span>';
@@ -481,19 +526,8 @@ async function previewMaterial(index) {
       title: material.title,
     });
 
-    const cleanFileUrl = `/api/downloads/${encodeURIComponent(data.filename)}`;
-    
     // Direct open in a new tab!
-    const newTab = window.open(cleanFileUrl, '_blank');
-    if (!newTab) {
-      // In case popup blocker intercepts window.open
-      const tempLink = document.createElement('a');
-      tempLink.href = cleanFileUrl;
-      tempLink.target = '_blank';
-      document.body.appendChild(tempLink);
-      tempLink.click();
-      tempLink.remove();
-    }
+    previewFileHelper(data);
   } catch (error) {
     showToast('error', 'Gagal Membuka Preview', error.message);
   } finally {

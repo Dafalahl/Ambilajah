@@ -401,159 +401,72 @@ export default {
         const session = await decryptSession(sessionToken);
         if (!session) return jsonResponse({ error: 'Belum login atau sesi telah berakhir.' }, 401);
 
-        // Prioritize student dashboard & enrolled courses routes first
-        const routes = ['/dashboard', '/home', '/my-courses', '/user/courses', '/courses'];
-        let html = '';
-        let matchedRoute = '';
+        const fetchHeaders = {
+          'Cookie': session.cookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        };
 
-        for (const r of routes) {
-          try {
-            let resp = await fetch(`${LMS_ORIGIN}${r}`, {
-              headers: {
-                'Cookie': session.cookies,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-              },
-              redirect: 'manual',
-            });
+        // Fetch both /courses and /dashboard to discover all available course IDs
+        const [coursesResp, dashResp] = await Promise.all([
+          fetch(`${LMS_ORIGIN}/courses`, { headers: fetchHeaders, redirect: 'follow' }).catch(() => null),
+          fetch(`${LMS_ORIGIN}/dashboard`, { headers: fetchHeaders, redirect: 'follow' }).catch(() => null),
+        ]);
 
-            if (resp.status === 302 || resp.status === 301 || resp.status === 303) {
-              const redirectLoc = resp.headers.get('location');
-              if (redirectLoc && !redirectLoc.includes('/login')) {
-                const fullRedirect = redirectLoc.startsWith('http') ? redirectLoc : `${LMS_ORIGIN}${redirectLoc}`;
-                resp = await fetch(fullRedirect, {
-                  headers: {
-                    'Cookie': session.cookies,
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                  },
-                  redirect: 'manual',
-                });
-              }
-            }
+        const html1 = (coursesResp && coursesResp.status === 200) ? await coursesResp.text() : '';
+        const html2 = (dashResp && dashResp.status === 200) ? await dashResp.text() : '';
+        const combinedHtml = `${html1}\n${html2}`;
 
-            if (resp.status === 200) {
-              const txt = await resp.text();
-              const isLoginPage = txt.includes('type="password"') || txt.includes('name="password"') || (txt.includes('id="password"') && txt.includes('/login'));
-              if (!isLoginPage && txt.length > 500) {
-                // If it's dashboard/home, it has the student's enrolled courses!
-                if (r === '/dashboard' || r === '/home' || r === '/my-courses') {
-                  html = txt;
-                  matchedRoute = r;
-                  break;
-                }
-                if (!html) {
-                  html = txt;
-                  matchedRoute = r;
-                }
-              }
-            }
-          } catch (e) {
-            // continue
-          }
-        }
-
-        if (!html) {
+        if (!combinedHtml || combinedHtml.length < 200) {
           return jsonResponse({ error: 'Tidak bisa mengakses halaman courses. Pastikan sudah login.' }, 500);
         }
 
-        const courses = [];
-        const seen = new Set();
-
-        // Helper to clean course title from category tags & action text
+        // Helper to clean course title from badges & action suffixes
         const cleanCourseName = (raw) => {
           let name = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          name = name.replace(/\s*(Start Quiz|Take Quiz|Lihat Materi|Lihat Mata Kuliah|Lanjutkan|Free Preview|\d+%\s*|\d+\s*lessons?|\d+\s*materi).*$/i, '').trim();
-          name = name.replace(/\s*(Programming|Networking|Multimedia|Sistem Informasi|Teknik Informatika|Sains Data|Umum|Wajib|Pilihan)$/i, '').trim();
-          return name;
+          name = name.replace(/\s*[-–—|].*$/i, '').trim();
+          name = name.replace(/\s*(Start Quiz|Take Quiz|Lihat Materi|Lihat Mata Kuliah|Start Learning|Lanjutkan|Free Preview|\d+%\s*|\d+\s*lessons?|\d+\s*materi).*$/i, '').trim();
+          name = name.replace(/\s*(Programming|Networking|Multimedia|Sistem Informasi|Teknik Informatika|Sains Data|DesignDraft|Draft|Free|Umum|Wajib|Pilihan)$/i, '').trim();
+          return name.trim();
         };
 
-        // Strategy 1: Match structured Cards with title outside <a> tag
-        const cardRegex = /<div\s+[^>]*class=["']([^"']*(?:card|course-item|course-box|course)[^"']*)["'][^>]*>([\s\S]*?)<\/div\s*>/gi;
-        let cm;
-        while ((cm = cardRegex.exec(html)) !== null) {
-          const cardBlock = cm[2];
-          const linkMatch = cardBlock.match(/href=["']([^"']*\/courses?\/[^"']*)["']/i);
-          if (!linkMatch) continue;
+        // Extract all course IDs
+        const courseMap = new Map();
+        const linkRegex = /href=["']([^"']*\/courses?\/(\d+)(?:\/[^"']*)?)["']/gi;
+        let lm;
+        while ((lm = linkRegex.exec(combinedHtml)) !== null) {
+          const fullHref = lm[1];
+          const courseId = lm[2];
+          if (fullHref.includes('/login') || fullHref.includes('/logout') || fullHref.includes('/register') || fullHref.includes('/grade') || fullHref.includes('/quiz') || fullHref.includes('/assignment')) continue;
 
-          const href = linkMatch[1];
-          if (href.includes('/login') || href.includes('/logout') || href.includes('/register') || href === '#') continue;
-          const cleanHref = href.replace(/\/+$/, '');
-          if (cleanHref.endsWith('/courses') || cleanHref.endsWith('/course') || cleanHref.endsWith('/dashboard')) continue;
-
-          // If on general courses catalog, only include courses that the user is actually enrolled in
-          if (cardBlock.includes('Enroll in Course') || (matchedRoute === '/courses' && cardBlock.includes('Enroll') && !cardBlock.includes('Enrolled'))) {
-            continue;
-          }
-
-          const fullUrl = href.startsWith('http') ? href : `${LMS_ORIGIN}${href}`;
-          if (seen.has(fullUrl)) continue;
-
-          const headingMatch = cardBlock.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i)
-                            || cardBlock.match(/class=["'][^"']*title[^"']*["'][^>]*>([\s\S]*?)<\//i);
-          let rawTitle = headingMatch ? headingMatch[1] : '';
-          let title = cleanCourseName(rawTitle);
-
-          if (title && title.length >= 2 && !title.toLowerCase().includes('courses') && !title.toLowerCase().includes('dashboard')) {
-            seen.add(fullUrl);
-            const idMatch = href.match(/\/courses?\/(\d+)/);
-            courses.push({ id: idMatch ? idMatch[1] : href, name: title, url: fullUrl });
+          if (!courseMap.has(courseId)) {
+            courseMap.set(courseId, {
+              id: courseId,
+              name: `Mata Kuliah ${courseId}`,
+              url: `${LMS_ORIGIN}/courses/${courseId}`,
+            });
           }
         }
 
-        // Strategy 2: Match all remaining direct <a> course links
-        const aRegex = /<a\s+([^>]*?)>([\s\S]*?)<\/a>/gi;
-        let am;
-        while ((am = aRegex.exec(html)) !== null) {
-          const attrs = am[1];
-          const inner = am[2];
-          const hrefMatch = attrs.match(/href=["']([^"']+)["']/i);
-          if (!hrefMatch) continue;
-          const href = hrefMatch[1];
-          if (!href.includes('/course') && !href.includes('/courses/')) continue;
-          if (href.includes('/login') || href.includes('/logout') || href.includes('/register') || href.includes('/forgot') || href === '#') continue;
-          const cleanHref = href.replace(/\/+$/, '');
-          if (cleanHref.endsWith('/courses') || cleanHref.endsWith('/course') || cleanHref.endsWith('/dashboard') || cleanHref.endsWith('/home')) continue;
-
-          const fullUrl = href.startsWith('http') ? href : `${LMS_ORIGIN}${href}`;
-          if (seen.has(fullUrl)) continue;
-
-          const titleAttr = (attrs.match(/title=["']([^"']+)["']/i) || [])[1] || '';
-          const heading = (inner.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i) || [])[1] || '';
-          let name = cleanCourseName(heading || titleAttr || inner);
-
-          if (name && name.length >= 2 && !name.toLowerCase().includes('courses') && !name.toLowerCase().includes('dashboard')) {
-            seen.add(fullUrl);
-            const idMatch = href.match(/\/courses?\/(\d+)/);
-            courses.push({ id: idMatch ? idMatch[1] : href, name, url: fullUrl });
-          }
-        }
-
-        if (courses.length === 0) {
+        const candidateCourses = Array.from(courseMap.values());
+        if (candidateCourses.length === 0) {
           return jsonResponse({ error: 'Tidak ada course ditemukan. Pastikan akunmu sudah terdaftar di kelas.' }, 404);
         }
 
-        // Authorize & verify in parallel that user is ACTUALLY enrolled ("Enrolled via Class Assignment" / "Start Learning")
-        const checkResults = await Promise.all(
-          courses.map(async (course) => {
+        // Verify each course page in parallel: extract true title & verify active enrollment
+        const verifiedCourses = await Promise.all(
+          candidateCourses.map(async (course) => {
             try {
-              // Fetch course overview page (e.g. /courses/27)
-              const chkResp = await fetch(course.url, {
-                headers: {
-                  'Cookie': session.cookies,
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                },
-                redirect: 'follow',
-              });
+              const resp = await fetch(course.url, { headers: fetchHeaders, redirect: 'follow' });
+              if (resp.status !== 200) return null;
 
-              if (chkResp.status !== 200) return null;
+              const txt = await resp.text();
 
-              const txt = await chkResp.text();
-
-              // If course page has "Enroll in Course", user is NOT enrolled
+              // If course page explicitly asks to "Enroll in Course", student is NOT enrolled
               if (txt.includes('Enroll in Course') || (txt.includes('Enroll Now') && !txt.includes('Enrolled'))) {
                 return null;
               }
 
-              // If course page has "Enrolled via Class Assignment", "Start Learning", "Enrolled", or has lessons
+              // Verify enrollment status
               const isEnrolled = txt.includes('Enrolled via Class Assignment')
                               || txt.includes('Enrolled via Class')
                               || txt.includes('Start Learning')
@@ -561,18 +474,26 @@ export default {
                               || txt.includes('Lihat Materi')
                               || /\/lessons\/\d+/i.test(txt);
 
-              if (isEnrolled) {
-                return course;
+              if (!isEnrolled) return null;
+
+              // Extract clean course title from heading or title tag
+              const hMatch = txt.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i) || txt.match(/<title>([\s\S]*?)<\/title>/i);
+              if (hMatch) {
+                const parsedTitle = cleanCourseName(hMatch[1]);
+                if (parsedTitle && parsedTitle.length >= 2 && !parsedTitle.toLowerCase().includes('course') && !parsedTitle.toLowerCase().includes('dashboard')) {
+                  course.name = parsedTitle;
+                }
               }
-              return null;
+
+              return course;
             } catch (e) {
-              return course; // fallback to include if check fails
+              return null;
             }
           })
         );
 
-        const authorizedCourses = checkResults.filter(Boolean);
-        const finalCourses = authorizedCourses.length > 0 ? authorizedCourses : courses;
+        const authorizedCourses = verifiedCourses.filter(Boolean);
+        const finalCourses = authorizedCourses.length > 0 ? authorizedCourses : candidateCourses;
 
         return jsonResponse({ success: true, courses: finalCourses });
       } catch (err) {

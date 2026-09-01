@@ -323,13 +323,14 @@ async function loadMaterials(courseUrl) {
       return;
     }
 
-    container.innerHTML = currentMaterials.map((mat, i) => `
+    container.innerHTML = currentMaterials.map((mat, i) => {
+      const displayTitle = (mat.title || '').replace(/^(\d+[\s._\-–—:]*)+/g, '').trim() || mat.title;
+      return `
       <div class="material-card" id="material-item-${i}">
         <div class="material-left">
-          <div class="material-icon-box">${getTypeIcon(mat.type)}</div>
+          <div class="material-icon-box">📄</div>
           <div class="material-text">
-            <div class="material-name" title="${escapeHtml(mat.title)}">${escapeHtml(mat.title)}</div>
-            <div class="material-type-tag">${getTypeTag(mat.type)}</div>
+            <div class="material-name" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</div>
           </div>
         </div>
 
@@ -345,7 +346,8 @@ async function loadMaterials(courseUrl) {
           </button>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     showToast('success', 'Materi Ditemukan', `${currentMaterials.length} materi tersedia`);
   } catch (error) {

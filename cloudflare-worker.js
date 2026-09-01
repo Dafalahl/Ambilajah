@@ -569,27 +569,15 @@ export default {
           if (seen.has(fullUrl)) continue;
           seen.add(fullUrl);
 
-          let title = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-
-          // Detect type accurately from title and inner HTML
-          let type = 'html';
-          const lowerStr = (title + ' ' + inner + ' ' + href).toLowerCase();
-          if (lowerStr.includes('.pdf') || lowerStr.includes('pdf')) {
-            type = 'pdf';
-          } else if (lowerStr.includes('.pptx') || lowerStr.includes('.ppt') || lowerStr.includes('powerpoint') || lowerStr.includes('presentation') || lowerStr.includes('slide')) {
-            type = 'pptx';
-          } else if (lowerStr.includes('.docx') || lowerStr.includes('.doc') || lowerStr.includes('word')) {
-            type = 'docx';
-          } else if (lowerStr.includes('video') || lowerStr.includes('youtube')) {
-            type = 'video';
-          }
+          let rawTitle = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          let title = rawTitle.replace(/^(\d+[\s._\-–—:]*)+/g, '').trim() || rawTitle;
 
           materials.push({
             id: match[2],
             index: index++,
             title: title || `Materi ${index}`,
             url: fullUrl,
-            type,
+            type: 'material',
           });
         }
 
@@ -619,7 +607,8 @@ export default {
           }
         } catch (e) {}
 
-        const title = body.title || 'Materi_Kuliah';
+        let title = body.title || 'Materi_Kuliah';
+        title = title.replace(/^(\d+[\s._\-–—:]*)+/g, '').trim() || title;
         const safeTitle = title.replace(/[^a-zA-Z0-9\s\-_]/g, '').replace(/\s+/g, '_').substring(0, 70);
 
         // Check if lessonUrl directly targets a binary file

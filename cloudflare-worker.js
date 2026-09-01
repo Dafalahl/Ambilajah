@@ -170,7 +170,7 @@ function getFileInfo(url = '', contentType = '') {
   return { ext: 'html', mimeType: 'text/html;charset=utf-8', isBinary: false };
 }
 
-// Clean right-click locks while preserving interactive buttons, tabs, slide deck controls, and scripts
+// Clean right-click locks while preserving ALL interactive scripts, buttons, tabs, and slide controls
 function cleanHtmlContent(html, title, baseUrl = LMS_ORIGIN) {
   if (!html) return '';
 
@@ -186,19 +186,7 @@ function cleanHtmlContent(html, title, baseUrl = LMS_ORIGIN) {
     cleaned = `${baseTag}\n${cleaned}`;
   }
 
-  // 2. Remove ONLY pure anti-copy / contextmenu blocker scripts (do not touch slider/presentation scripts)
-  cleaned = cleaned.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (match, scriptBody) => {
-    if (
-      (scriptBody.includes('contextmenu') && scriptBody.includes('preventDefault')) ||
-      (scriptBody.includes('selectstart') && scriptBody.includes('preventDefault')) ||
-      (scriptBody.includes('debugger') && scriptBody.includes('setInterval'))
-    ) {
-      return ''; // Strip only malicious anti-copy blockers
-    }
-    return match; // Keep slide deck scripts (Reveal.js, Swiper, jQuery, Bootstrap, etc.)
-  });
-
-  // 3. Remove inline event blockers
+  // 2. Remove ONLY inline blocker attributes (DO NOT remove any <script> tags so slide/booklet controllers run 100%)
   cleaned = cleaned
     .replace(/\soncontextmenu\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\sonselectstart\s*=\s*["'][^"']*["']/gi, '')
@@ -208,19 +196,19 @@ function cleanHtmlContent(html, title, baseUrl = LMS_ORIGIN) {
     .replace(/\sonpaste\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\sunselectable\s*=\s*["'][^"']*["']/gi, '');
 
-  // 4. Remove ONLY invisible protection overlay and dev warning (DO NOT touch .controls as slides use it)
+  // 3. Remove ONLY invisible protection overlay and dev warning (DO NOT touch controls or slide structures)
   cleaned = cleaned
     .replace(/<div\s+[^>]*class=["'][^"']*(?:scroll-indicator|dev-warning)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '')
     .replace(/<div\s+[^>]*id=["']devWarning["'][^>]*>[\s\S]*?<\/div>/gi, '');
 
-  // 5. Force user-select in all CSS without breaking slide transitions
+  // 4. Force user-select in all CSS without breaking slide transitions
   cleaned = cleaned
     .replace(/user-select\s*:\s*none\s*(!important)?;/gi, 'user-select: text !important;')
     .replace(/-webkit-user-select\s*:\s*none\s*(!important)?;/gi, '-webkit-user-select: text !important;')
     .replace(/-moz-user-select\s*:\s*none\s*(!important)?;/gi, '-moz-user-select: text !important;')
     .replace(/-ms-user-select\s*:\s*none\s*(!important)?;/gi, '-ms-user-select: text !important;');
 
-  // 6. Inject guaranteed selection styles & authoritative capture-phase event unblocker
+  // 5. Inject guaranteed selection styles & authoritative capture-phase event unblocker
   const cleanHeadInject = `
   <style>
     *, *::before, *::after {
@@ -230,7 +218,7 @@ function cleanHtmlContent(html, title, baseUrl = LMS_ORIGIN) {
       user-select: text !important;
       -webkit-touch-callout: default !important;
     }
-    button, input, select, textarea, a, .btn, [role="button"], [onclick], .navigate-left, .navigate-right, .navigate-up, .navigate-down, .controls button {
+    button, input, select, textarea, a, .btn, .control-btn, .next-btn, .prev-btn, [role="button"], [onclick], .navigate-left, .navigate-right, .navigate-up, .navigate-down, .controls button {
       pointer-events: auto !important;
       cursor: pointer !important;
     }
@@ -244,7 +232,7 @@ function cleanHtmlContent(html, title, baseUrl = LMS_ORIGIN) {
   </style>
   <script>
     (function() {
-      // Unblock contextmenu, copy, and select in capture phase so right-click is 100% available
+      // Capture phase unblocker: intercepts and stops anti-copy blockers before they run, leaving all slide controls 100% working
       const unblock = function(e) {
         e.stopImmediatePropagation();
       };

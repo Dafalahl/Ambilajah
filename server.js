@@ -54,26 +54,20 @@ function getSession(req) {
  */
 app.get('/api/debug', async (req, res) => {
   const axios = require('axios');
+  const cheerio = require('cheerio');
+  const { login, BASE_URL, PROXY_URL, LMS_ORIGIN } = require('./lib/auth');
   const results = {};
 
-  const urls = [
+  const testUrls = [
+    'https://ambilajah-proxy.donateme.workers.dev/proxy/login',
     'http://class.tiflab.my.id/login',
-    'https://class.tiflab.my.id/login',
   ];
 
-  for (const url of urls) {
+  for (const url of testUrls) {
     try {
       const resp = await axios.get(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-          'Sec-Ch-Ua': '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
-          'Sec-Ch-Ua-Mobile': '?0',
-          'Sec-Ch-Ua-Platform': '"Windows"',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Upgrade-Insecure-Requests': '1',
         },
         maxRedirects: 0,
         validateStatus: () => true,
@@ -81,13 +75,16 @@ app.get('/api/debug', async (req, res) => {
       });
 
       const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+      const $ = cheerio.load(body);
+      const token = $('input[name="_token"]').val() || $('meta[name="csrf-token"]').attr('content');
+
       results[url] = {
         status: resp.status,
-        hasToken: body.includes('_token'),
-        hasCsrfMeta: body.includes('csrf-token'),
-        hasCloudflare: body.includes('Just a moment') || body.includes('cf-mitigated') || body.includes('Cloudflare'),
-        setCookies: resp.headers['set-cookie'] ? resp.headers['set-cookie'].length : 0,
-        bodyPreview: body.substring(0, 500),
+        hasToken: !!token,
+        tokenValue: token ? token.substring(0, 10) + '...' : null,
+        setCookiesCount: resp.headers['set-cookie'] ? resp.headers['set-cookie'].length : 0,
+        setCookies: resp.headers['set-cookie'] || [],
+        bodyLength: body.length,
       };
     } catch (err) {
       results[url] = { error: err.message };
@@ -97,7 +94,8 @@ app.get('/api/debug', async (req, res) => {
   res.json({
     serverTime: new Date().toISOString(),
     vercel: !!process.env.VERCEL,
-    region: process.env.VERCEL_REGION || 'local',
+    isCloud: !!(process.env.VERCEL || process.env.RENDER),
+    activeBaseUrl: BASE_URL,
     results,
   });
 });

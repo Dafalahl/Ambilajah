@@ -480,7 +480,7 @@ export default {
           if (cleanHref.endsWith('/courses') || cleanHref.endsWith('/course') || cleanHref.endsWith('/dashboard')) continue;
 
           // If on general courses catalog, only include courses that the user is actually enrolled in
-          if (matchedRoute === '/courses' && (cardBlock.includes('Daftar Sekarang') || cardBlock.includes('Enroll Now')) && !cardBlock.includes('Lihat Materi') && !cardBlock.includes('/learn')) {
+          if (cardBlock.includes('Enroll in Course') || (matchedRoute === '/courses' && cardBlock.includes('Enroll') && !cardBlock.includes('Enrolled'))) {
             continue;
           }
 
@@ -531,7 +531,7 @@ export default {
           return jsonResponse({ error: 'Tidak ada course ditemukan. Pastikan akunmu sudah terdaftar di kelas.' }, 404);
         }
 
-        // Authorize & verify in parallel that user is ACTUALLY enrolled and has lessons in the course
+        // Authorize & verify in parallel that user is ACTUALLY enrolled ("Enrolled via Class Assignment")
         const checkResults = await Promise.all(
           courses.map(async (course) => {
             try {
@@ -548,10 +548,10 @@ export default {
               if (chkResp.status !== 200) return null;
 
               const txt = await chkResp.text();
-              const hasLessons = /\/lessons\/\d+/i.test(txt);
-              const isBlocked = txt.includes('belum terdaftar') || txt.includes('tidak memiliki akses') || txt.includes('Daftar Sekarang') || txt.includes('Enroll Now');
+              const isBlocked = txt.includes('Enroll in Course') || txt.includes('belum terdaftar') || txt.includes('tidak memiliki akses') || txt.includes('Daftar Sekarang');
+              const isEnrolled = txt.includes('Enrolled via Class Assignment') || txt.includes('Enrolled') || /\/lessons\/\d+/i.test(txt);
 
-              if (hasLessons && !isBlocked) {
+              if (isEnrolled && !isBlocked) {
                 return course;
               }
               return null;

@@ -273,7 +273,7 @@ export default {
             return jsonResponse({ error: 'Login gagal. NPM atau password tidak sesuai.' }, 401);
           }
 
-          // Follow redirect to dashboard to get fresh CSRF
+          // Follow redirect to dashboard to get fresh CSRF & final session cookies
           const dashUrl = loc.startsWith('http') ? loc : `${LMS_ORIGIN}${loc}`;
           const dashRes = await fetch(dashUrl, {
             headers: {
@@ -320,39 +320,43 @@ export default {
         const session = await decryptSession(sessionToken);
         if (!session) return jsonResponse({ error: 'Belum login atau sesi telah berakhir.' }, 401);
 
-        const routes = ['/courses', '/course', '/dashboard'];
+        const routes = ['/courses', '/course', '/dashboard', '/home'];
         let html = '';
 
         for (const r of routes) {
-          let resp = await fetch(`${LMS_ORIGIN}${r}`, {
-            headers: {
-              'Cookie': session.cookies,
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-            },
-            redirect: 'manual',
-          });
+          try {
+            let resp = await fetch(`${LMS_ORIGIN}${r}`, {
+              headers: {
+                'Cookie': session.cookies,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+              },
+              redirect: 'manual',
+            });
 
-          // Follow redirect if redirected to /dashboard or /courses
-          if (resp.status === 302 || resp.status === 301 || resp.status === 303) {
-            const redirectLoc = resp.headers.get('location');
-            if (redirectLoc && !redirectLoc.includes('/login')) {
-              const fullRedirect = redirectLoc.startsWith('http') ? redirectLoc : `${LMS_ORIGIN}${redirectLoc}`;
-              resp = await fetch(fullRedirect, {
-                headers: {
-                  'Cookie': session.cookies,
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                },
-                redirect: 'manual',
-              });
+            if (resp.status === 302 || resp.status === 301 || resp.status === 303) {
+              const redirectLoc = resp.headers.get('location');
+              if (redirectLoc && !redirectLoc.includes('/login')) {
+                const fullRedirect = redirectLoc.startsWith('http') ? redirectLoc : `${LMS_ORIGIN}${redirectLoc}`;
+                resp = await fetch(fullRedirect, {
+                  headers: {
+                    'Cookie': session.cookies,
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                  },
+                  redirect: 'manual',
+                });
+              }
             }
-          }
 
-          if (resp.status === 200) {
-            const txt = await resp.text();
-            if (!txt.includes('Sign in to your account') && !txt.includes('name="_token"')) {
-              html = txt;
-              break;
+            if (resp.status === 200) {
+              const txt = await resp.text();
+              const isLoginPage = txt.includes('type="password"') || txt.includes('name="password"') || (txt.includes('id="password"') && txt.includes('/login'));
+              if (!isLoginPage && txt.length > 500) {
+                html = txt;
+                break;
+              }
             }
+          } catch (e) {
+            // continue
           }
         }
 
@@ -360,26 +364,68 @@ export default {
           return jsonResponse({ error: 'Tidak bisa mengakses halaman courses. Pastikan sudah login.' }, 500);
         }
 
-        // Parse courses
         const courses = [];
         const seen = new Set();
-        const linkRegex = /<a\s+[^>]*href=["']([^"']*\/courses?\/(\d+)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
-        let match;
 
-        while ((match = linkRegex.exec(html)) !== null) {
-          const href = match[1];
-          const id = match[2];
-          const inner = match[3];
+        // Strategy 1: Match structured Cards with title outside <a> tag
+        const cardRegex = /<div\s+[^>]*class=["']([^"']*(?:card|course-item|course-box|course)[^"']*)["'][^>]*>([\s\S]*?)<\/div\s*>/gi;
+        let cm;
+        while ((cm = cardRegex.exec(html)) !== null) {
+          const cardBlock = cm[2];
+          const linkMatch = cardBlock.match(/href=["']([^"']*\/courses?\/[^"']*)["']/i);
+          if (!linkMatch) continue;
 
-          if (href.includes('/login') || href.includes('/logout') || href.includes('/register')) continue;
+          const href = linkMatch[1];
+          if (href.includes('/login') || href.includes('/logout') || href.includes('/register') || href === '#') continue;
+          const cleanHref = href.replace(/\/+$/, '');
+          if (cleanHref.endsWith('/courses') || cleanHref.endsWith('/course') || cleanHref.endsWith('/dashboard')) continue;
+
           const fullUrl = href.startsWith('http') ? href : `${LMS_ORIGIN}${href}`;
           if (seen.has(fullUrl)) continue;
-          seen.add(fullUrl);
 
-          let name = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          if (name && name.length >= 2 && !name.toLowerCase().includes('all courses')) {
-            courses.push({ id, name, url: fullUrl });
+          const headingMatch = cardBlock.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i)
+                            || cardBlock.match(/class=["'][^"']*title[^"']*["'][^>]*>([\s\S]*?)<\//i);
+          let title = headingMatch ? headingMatch[1].replace(/<[^>]+>/g, ' ').trim() : '';
+          title = title.replace(/\s+/g, ' ').trim();
+
+          if (title && title.length >= 2 && !title.toLowerCase().includes('courses') && !title.toLowerCase().includes('dashboard')) {
+            seen.add(fullUrl);
+            const idMatch = href.match(/\/courses?\/(\d+)/);
+            courses.push({ id: idMatch ? idMatch[1] : href, name: title, url: fullUrl });
           }
+        }
+
+        // Strategy 2: Match all remaining direct <a> course links
+        const aRegex = /<a\s+([^>]*?)>([\s\S]*?)<\/a>/gi;
+        let am;
+        while ((am = aRegex.exec(html)) !== null) {
+          const attrs = am[1];
+          const inner = am[2];
+          const hrefMatch = attrs.match(/href=["']([^"']+)["']/i);
+          if (!hrefMatch) continue;
+          const href = hrefMatch[1];
+          if (!href.includes('/course') && !href.includes('/courses/')) continue;
+          if (href.includes('/login') || href.includes('/logout') || href.includes('/register') || href.includes('/forgot') || href === '#') continue;
+          const cleanHref = href.replace(/\/+$/, '');
+          if (cleanHref.endsWith('/courses') || cleanHref.endsWith('/course') || cleanHref.endsWith('/dashboard') || cleanHref.endsWith('/home')) continue;
+
+          const fullUrl = href.startsWith('http') ? href : `${LMS_ORIGIN}${href}`;
+          if (seen.has(fullUrl)) continue;
+
+          const titleAttr = (attrs.match(/title=["']([^"']+)["']/i) || [])[1] || '';
+          const heading = (inner.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i) || [])[1] || '';
+          let name = (heading || titleAttr || inner).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          name = name.replace(/\s*(Start Quiz|Take Quiz|Lihat Materi|Lihat Mata Kuliah|Free Preview|\d+%\s*|\d+\s*lessons?|\d+\s*materi).*$/i, '').trim();
+
+          if (name && name.length >= 2 && !name.toLowerCase().includes('courses') && !name.toLowerCase().includes('dashboard')) {
+            seen.add(fullUrl);
+            const idMatch = href.match(/\/courses?\/(\d+)/);
+            courses.push({ id: idMatch ? idMatch[1] : href, name, url: fullUrl });
+          }
+        }
+
+        if (courses.length === 0) {
+          return jsonResponse({ error: 'Tidak ada course ditemukan. Pastikan akunmu sudah terdaftar di kelas.' }, 404);
         }
 
         return jsonResponse({ success: true, courses });

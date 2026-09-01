@@ -49,6 +49,60 @@ function getSession(req) {
 // ============================================
 
 /**
+ * GET /api/debug — Temporary diagnostic endpoint to check connectivity from server to LMS
+ * Remove this after debugging is complete
+ */
+app.get('/api/debug', async (req, res) => {
+  const axios = require('axios');
+  const results = {};
+
+  const urls = [
+    'http://class.tiflab.my.id/login',
+    'https://class.tiflab.my.id/login',
+  ];
+
+  for (const url of urls) {
+    try {
+      const resp = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Sec-Ch-Ua': '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+          'Sec-Ch-Ua-Mobile': '?0',
+          'Sec-Ch-Ua-Platform': '"Windows"',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Upgrade-Insecure-Requests': '1',
+        },
+        maxRedirects: 0,
+        validateStatus: () => true,
+        timeout: 10000,
+      });
+
+      const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+      results[url] = {
+        status: resp.status,
+        hasToken: body.includes('_token'),
+        hasCsrfMeta: body.includes('csrf-token'),
+        hasCloudflare: body.includes('Just a moment') || body.includes('cf-mitigated') || body.includes('Cloudflare'),
+        setCookies: resp.headers['set-cookie'] ? resp.headers['set-cookie'].length : 0,
+        bodyPreview: body.substring(0, 500),
+      };
+    } catch (err) {
+      results[url] = { error: err.message };
+    }
+  }
+
+  res.json({
+    serverTime: new Date().toISOString(),
+    vercel: !!process.env.VERCEL,
+    region: process.env.VERCEL_REGION || 'local',
+    results,
+  });
+});
+
+/**
  * POST /api/login
  * Login to Class.tiflab with NPM + password
  */

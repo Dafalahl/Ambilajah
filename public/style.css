@@ -473,6 +473,14 @@ body {
   line-height: 1.45;
 }
 
+.security-hint {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: #34d399;
+  font-weight: 500;
+}
+
 .card {
   background: rgba(13, 20, 34, 0.9);
   border: 1.5px solid rgba(52, 211, 153, 0.28);

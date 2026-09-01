@@ -170,25 +170,35 @@ function getFileInfo(url = '', contentType = '') {
   return { ext: 'html', mimeType: 'text/html;charset=utf-8', isBinary: false };
 }
 
-// Clean right-click locks while preserving interactive buttons, tabs, and scripts
-function cleanHtmlContent(html, title) {
+// Clean right-click locks while preserving interactive buttons, tabs, slide deck controls, and scripts
+function cleanHtmlContent(html, title, baseUrl = LMS_ORIGIN) {
   if (!html) return '';
 
   let cleaned = html;
 
-  // 1. Remove pure anti-copy / contextmenu blocker scripts
+  // 1. Inject <base href="..."> so all relative slide scripts, fonts, images, and CSS load from LMS origin
+  const baseTag = `<base href="${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}">`;
+  if (cleaned.includes('<head>')) {
+    cleaned = cleaned.replace('<head>', `<head>\n  ${baseTag}`);
+  } else if (cleaned.includes('<head ')) {
+    cleaned = cleaned.replace(/<head[^>]*>/i, `$&\n  ${baseTag}`);
+  } else {
+    cleaned = `${baseTag}\n${cleaned}`;
+  }
+
+  // 2. Remove ONLY pure anti-copy / contextmenu blocker scripts (do not touch slider/presentation scripts)
   cleaned = cleaned.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (match, scriptBody) => {
     if (
       (scriptBody.includes('contextmenu') && scriptBody.includes('preventDefault')) ||
       (scriptBody.includes('selectstart') && scriptBody.includes('preventDefault')) ||
       (scriptBody.includes('debugger') && scriptBody.includes('setInterval'))
     ) {
-      return ''; // Strip only malicious/anti-copy blockers
+      return ''; // Strip only malicious anti-copy blockers
     }
-    return match; // Keep legitimate Bootstrap / widget / interactive scripts!
+    return match; // Keep slide deck scripts (Reveal.js, Swiper, jQuery, Bootstrap, etc.)
   });
 
-  // 2. Remove inline event blockers
+  // 3. Remove inline event blockers
   cleaned = cleaned
     .replace(/\soncontextmenu\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\sonselectstart\s*=\s*["'][^"']*["']/gi, '')
@@ -196,24 +206,21 @@ function cleanHtmlContent(html, title) {
     .replace(/\soncopy\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\soncut\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\sonpaste\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/\sonkeydown\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/\sonmousedown\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\sunselectable\s*=\s*["'][^"']*["']/gi, '');
 
-  // 3. Remove control buttons (Top/Bottom/Fullscreen) and blocking overlays
+  // 4. Remove ONLY invisible protection overlay and dev warning (DO NOT touch .controls as slides use it)
   cleaned = cleaned
-    .replace(/<div\s+[^>]*class=["'][^"']*(?:controls|scroll-indicator|overlay)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '')
-    .replace(/<button\s+[^>]*(?:id=["']fullscreenBtn["']|onclick=["'][^"']*scrollTo[^"']*["'])[^>]*>[\s\S]*?<\/button>/gi, '');
+    .replace(/<div\s+[^>]*class=["'][^"']*(?:scroll-indicator|dev-warning)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<div\s+[^>]*id=["']devWarning["'][^>]*>[\s\S]*?<\/div>/gi, '');
 
-  // 4. Force user-select in all CSS
+  // 5. Force user-select in all CSS without breaking slide transitions
   cleaned = cleaned
     .replace(/user-select\s*:\s*none\s*(!important)?;/gi, 'user-select: text !important;')
     .replace(/-webkit-user-select\s*:\s*none\s*(!important)?;/gi, '-webkit-user-select: text !important;')
     .replace(/-moz-user-select\s*:\s*none\s*(!important)?;/gi, '-moz-user-select: text !important;')
-    .replace(/-ms-user-select\s*:\s*none\s*(!important)?;/gi, '-ms-user-select: text !important;')
-    .replace(/pointer-events\s*:\s*none\s*(!important)?;/gi, 'pointer-events: auto !important;');
+    .replace(/-ms-user-select\s*:\s*none\s*(!important)?;/gi, '-ms-user-select: text !important;');
 
-  // 5. Inject guaranteed selection styles & authoritative capture-phase event unblocker
+  // 6. Inject guaranteed selection styles & authoritative capture-phase event unblocker
   const cleanHeadInject = `
   <style>
     *, *::before, *::after {
@@ -223,14 +230,7 @@ function cleanHtmlContent(html, title) {
       user-select: text !important;
       -webkit-touch-callout: default !important;
     }
-    html, body {
-      -webkit-user-select: text !important;
-      -moz-user-select: text !important;
-      user-select: text !important;
-      overflow-x: hidden;
-      overflow-y: auto !important;
-    }
-    button, input, select, textarea, a, .btn, [role="button"], [onclick] {
+    button, input, select, textarea, a, .btn, [role="button"], [onclick], .navigate-left, .navigate-right, .navigate-up, .navigate-down, .controls button {
       pointer-events: auto !important;
       cursor: pointer !important;
     }
@@ -240,10 +240,11 @@ function cleanHtmlContent(html, title) {
     }
     ::selection { background: #2563eb !important; color: #ffffff !important; }
     ::-moz-selection { background: #2563eb !important; color: #ffffff !important; }
-    .controls, .scroll-indicator, #fullscreenBtn { display: none !important; }
+    .scroll-indicator, #devWarning { display: none !important; }
   </style>
   <script>
     (function() {
+      // Unblock contextmenu, copy, and select in capture phase so right-click is 100% available
       const unblock = function(e) {
         e.stopImmediatePropagation();
       };
@@ -257,7 +258,6 @@ function cleanHtmlContent(html, title) {
         document.ondragstart = null;
         document.oncopy = null;
         document.oncut = null;
-        document.onkeydown = null;
         if (document.body) {
           document.body.oncontextmenu = null;
           document.body.onselectstart = null;
@@ -570,12 +570,26 @@ export default {
           seen.add(fullUrl);
 
           let title = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+          // Detect type accurately from title and inner HTML
+          let type = 'html';
+          const lowerStr = (title + ' ' + inner + ' ' + href).toLowerCase();
+          if (lowerStr.includes('.pdf') || lowerStr.includes('pdf')) {
+            type = 'pdf';
+          } else if (lowerStr.includes('.pptx') || lowerStr.includes('.ppt') || lowerStr.includes('powerpoint') || lowerStr.includes('presentation') || lowerStr.includes('slide')) {
+            type = 'pptx';
+          } else if (lowerStr.includes('.docx') || lowerStr.includes('.doc') || lowerStr.includes('word')) {
+            type = 'docx';
+          } else if (lowerStr.includes('video') || lowerStr.includes('youtube')) {
+            type = 'video';
+          }
+
           materials.push({
             id: match[2],
             index: index++,
             title: title || `Materi ${index}`,
             url: fullUrl,
-            type: 'html',
+            type,
           });
         }
 
@@ -708,9 +722,17 @@ export default {
             redirect: 'manual',
           });
           const rawIframeHtml = await iframeResp.text();
-          finalHtml = cleanHtmlContent(rawIframeHtml, title);
+
+          // Calculate base directory URL for slide assets (images, CSS, JS frameworks)
+          let materialBaseUrl = LMS_ORIGIN;
+          const lastSlash = iframeUrl.lastIndexOf('/');
+          if (lastSlash !== -1) {
+            materialBaseUrl = iframeUrl.substring(0, lastSlash + 1);
+          }
+
+          finalHtml = cleanHtmlContent(rawIframeHtml, title, materialBaseUrl);
         } else {
-          finalHtml = cleanHtmlContent(lessonHtml, title);
+          finalHtml = cleanHtmlContent(lessonHtml, title, LMS_ORIGIN);
         }
 
         const filename = `${safeTitle}.html`;

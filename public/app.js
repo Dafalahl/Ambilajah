@@ -329,7 +329,7 @@ async function loadMaterials(courseUrl) {
           <div class="material-icon-box">${getTypeIcon(mat.type)}</div>
           <div class="material-text">
             <div class="material-name" title="${escapeHtml(mat.title)}">${escapeHtml(mat.title)}</div>
-            <div class="material-type-tag">${mat.type.toUpperCase()} MATERI</div>
+            <div class="material-type-tag">${getTypeTag(mat.type)}</div>
           </div>
         </div>
 
@@ -590,10 +590,25 @@ function getTypeIcon(type) {
     html: '📝',
     pdf: '📕',
     ppt: '📊',
+    pptx: '📊',
     doc: '📘',
+    docx: '📘',
     video: '🎥',
   };
   return icons[type] || '📄';
+}
+
+function getTypeTag(type) {
+  const tags = {
+    pdf: 'PDF DOKUMEN',
+    ppt: 'POWERPOINT / SLIDE',
+    pptx: 'POWERPOINT / SLIDE',
+    doc: 'WORD DOKUMEN',
+    docx: 'WORD DOKUMEN',
+    video: 'VIDEO PEMBELAJARAN',
+    html: 'HTML MODUL / SLIDE',
+  };
+  return tags[type] || 'MATERI KULIAH';
 }
 
 // --- Keyboard Shortcuts ---

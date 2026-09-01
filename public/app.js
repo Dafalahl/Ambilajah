@@ -360,7 +360,24 @@ async function loadMaterials(courseUrl) {
 
 // --- DIRECT INSTANT DOWNLOAD FLOW ---
 function downloadFileHelper(data) {
-  if (data.content) {
+  if (data.isBinary && (data.base64 || data.contentBase64)) {
+    const b64 = data.base64 || data.contentBase64;
+    const byteCharacters = atob(b64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: data.mimeType || 'application/octet-stream' });
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = data.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+  } else if (data.content) {
     const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
     const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -369,7 +386,7 @@ function downloadFileHelper(data) {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
   } else {
     const downloadLink = document.createElement('a');
     downloadLink.href = `/api/downloads/${encodeURIComponent(data.filename)}`;
@@ -381,7 +398,26 @@ function downloadFileHelper(data) {
 }
 
 function previewFileHelper(data) {
-  if (data.content) {
+  if (data.isBinary && (data.base64 || data.contentBase64)) {
+    const b64 = data.base64 || data.contentBase64;
+    const byteCharacters = atob(b64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: data.mimeType || 'application/pdf' });
+    const blobUrl = URL.createObjectURL(blob);
+    const newTab = window.open(blobUrl, '_blank');
+    if (!newTab) {
+      const tempLink = document.createElement('a');
+      tempLink.href = blobUrl;
+      tempLink.target = '_blank';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+    }
+  } else if (data.content) {
     const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
     const blobUrl = URL.createObjectURL(blob);
     const newTab = window.open(blobUrl, '_blank');

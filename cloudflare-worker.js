@@ -144,41 +144,134 @@ function mergeCookieStrings(oldCookies = '', newCookies = '') {
   return out.join('; ');
 }
 
-// Clean right-click locks & protect scripts from downloaded HTML
+function getFileInfo(url = '', contentType = '') {
+  const cleanUrl = url.split('?')[0].toLowerCase();
+  if (cleanUrl.endsWith('.pdf') || contentType.includes('pdf')) {
+    return { ext: 'pdf', mimeType: 'application/pdf', isBinary: true };
+  }
+  if (cleanUrl.endsWith('.pptx') || contentType.includes('presentationml')) {
+    return { ext: 'pptx', mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', isBinary: true };
+  }
+  if (cleanUrl.endsWith('.ppt') || contentType.includes('powerpoint')) {
+    return { ext: 'ppt', mimeType: 'application/vnd.ms-powerpoint', isBinary: true };
+  }
+  if (cleanUrl.endsWith('.docx') || contentType.includes('wordprocessingml')) {
+    return { ext: 'docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', isBinary: true };
+  }
+  if (cleanUrl.endsWith('.doc') || contentType.includes('msword')) {
+    return { ext: 'doc', mimeType: 'application/msword', isBinary: true };
+  }
+  if (cleanUrl.endsWith('.zip') || contentType.includes('zip')) {
+    return { ext: 'zip', mimeType: 'application/zip', isBinary: true };
+  }
+  if (cleanUrl.endsWith('.rar') || contentType.includes('rar')) {
+    return { ext: 'rar', mimeType: 'application/x-rar-compressed', isBinary: true };
+  }
+  return { ext: 'html', mimeType: 'text/html;charset=utf-8', isBinary: false };
+}
+
+// Clean right-click locks while preserving interactive buttons, tabs, and scripts
 function cleanHtmlContent(html, title) {
   if (!html) return '';
-  let cleaned = html
-    .replace(/oncontextmenu\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/onselectstart\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/ondragstart\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/oncopy\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/onkeydown\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/user-select\s*:\s*none\s*;?/gi, 'user-select: auto !important;')
-    .replace(/-webkit-user-select\s*:\s*none\s*;?/gi, '-webkit-user-select: auto !important;')
-    .replace(/-moz-user-select\s*:\s*none\s*;?/gi, '-moz-user-select: auto !important;');
 
-  const banner = `
-<!-- AmbilAjah Cleaned Material: ${title || 'Materi Kuliah'} -->
-<style>
-  * { user-select: auto !important; -webkit-user-select: auto !important; -moz-user-select: auto !important; }
-  body { padding-top: 10px !important; }
-  .ambilajah-banner {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: white; padding: 10px 18px; border-radius: 8px; font-family: sans-serif;
-    font-size: 13px; margin: 12px auto; max-width: 96%; display: flex;
-    justify-content: space-between; align-items: center; box-shadow: 0 4px 12px rgba(16,185,129,0.25);
-  }
-</style>
-<div class="ambilajah-banner">
-  <span>🎓 <strong>AmbilAjah</strong> — Materi ini telah dibebaskan dari proteksi lock & siap di-copy/split-screen.</span>
-  <span>✨ Class.tiflab Helper</span>
-</div>
+  let cleaned = html;
+
+  // 1. Remove pure anti-copy / contextmenu blocker scripts
+  cleaned = cleaned.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (match, scriptBody) => {
+    if (
+      (scriptBody.includes('contextmenu') && scriptBody.includes('preventDefault')) ||
+      (scriptBody.includes('selectstart') && scriptBody.includes('preventDefault')) ||
+      (scriptBody.includes('debugger') && scriptBody.includes('setInterval'))
+    ) {
+      return ''; // Strip only malicious/anti-copy blockers
+    }
+    return match; // Keep legitimate Bootstrap / widget / interactive scripts!
+  });
+
+  // 2. Remove inline event blockers
+  cleaned = cleaned
+    .replace(/\soncontextmenu\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\sonselectstart\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\sondragstart\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\soncopy\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\soncut\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\sonpaste\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\sonkeydown\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\sonmousedown\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\sunselectable\s*=\s*["'][^"']*["']/gi, '');
+
+  // 3. Remove control buttons (Top/Bottom/Fullscreen) and blocking overlays
+  cleaned = cleaned
+    .replace(/<div\s+[^>]*class=["'][^"']*(?:controls|scroll-indicator|overlay)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<button\s+[^>]*(?:id=["']fullscreenBtn["']|onclick=["'][^"']*scrollTo[^"']*["'])[^>]*>[\s\S]*?<\/button>/gi, '');
+
+  // 4. Force user-select in all CSS
+  cleaned = cleaned
+    .replace(/user-select\s*:\s*none\s*(!important)?;/gi, 'user-select: text !important;')
+    .replace(/-webkit-user-select\s*:\s*none\s*(!important)?;/gi, '-webkit-user-select: text !important;')
+    .replace(/-moz-user-select\s*:\s*none\s*(!important)?;/gi, '-moz-user-select: text !important;')
+    .replace(/-ms-user-select\s*:\s*none\s*(!important)?;/gi, '-ms-user-select: text !important;')
+    .replace(/pointer-events\s*:\s*none\s*(!important)?;/gi, 'pointer-events: auto !important;');
+
+  // 5. Inject guaranteed selection styles & authoritative capture-phase event unblocker
+  const cleanHeadInject = `
+  <style>
+    *, *::before, *::after {
+      -webkit-user-select: text !important;
+      -moz-user-select: text !important;
+      -ms-user-select: text !important;
+      user-select: text !important;
+      -webkit-touch-callout: default !important;
+    }
+    html, body {
+      -webkit-user-select: text !important;
+      -moz-user-select: text !important;
+      user-select: text !important;
+      overflow-x: hidden;
+      overflow-y: auto !important;
+    }
+    button, input, select, textarea, a, .btn, [role="button"], [onclick] {
+      pointer-events: auto !important;
+      cursor: pointer !important;
+    }
+    img {
+      pointer-events: auto !important;
+      -webkit-user-drag: auto !important;
+    }
+    ::selection { background: #2563eb !important; color: #ffffff !important; }
+    ::-moz-selection { background: #2563eb !important; color: #ffffff !important; }
+    .controls, .scroll-indicator, #fullscreenBtn { display: none !important; }
+  </style>
+  <script>
+    (function() {
+      const unblock = function(e) {
+        e.stopImmediatePropagation();
+      };
+      ['contextmenu', 'copy', 'cut', 'selectstart'].forEach(function(evt) {
+        window.addEventListener(evt, unblock, true);
+        document.addEventListener(evt, unblock, true);
+      });
+      window.addEventListener('DOMContentLoaded', function() {
+        document.oncontextmenu = null;
+        document.onselectstart = null;
+        document.ondragstart = null;
+        document.oncopy = null;
+        document.oncut = null;
+        document.onkeydown = null;
+        if (document.body) {
+          document.body.oncontextmenu = null;
+          document.body.onselectstart = null;
+          document.body.ondragstart = null;
+        }
+      });
+    })();
+  </script>
 `;
 
-  if (cleaned.includes('<body')) {
-    cleaned = cleaned.replace(/<body[^>]*>/i, `$&${banner}`);
+  if (cleaned.includes('</head>')) {
+    cleaned = cleaned.replace('</head>', `${cleanHeadInject}</head>`);
   } else {
-    cleaned = `${banner}${cleaned}`;
+    cleaned = `${cleanHeadInject}${cleaned}`;
   }
 
   return cleaned;
@@ -513,6 +606,35 @@ export default {
         } catch (e) {}
 
         const title = body.title || 'Materi_Kuliah';
+        const safeTitle = title.replace(/[^a-zA-Z0-9\s\-_]/g, '').replace(/\s+/g, '_').substring(0, 70);
+
+        // Check if lessonUrl directly targets a binary file
+        const directFileInfo = getFileInfo(lessonUrl);
+        if (directFileInfo.isBinary) {
+          const fileResp = await fetch(lessonUrl, {
+            headers: {
+              'Cookie': session.cookies,
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            },
+          });
+          const arrayBuffer = await fileResp.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = '';
+          const chunkSize = 8192;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+          }
+          const base64 = btoa(binary);
+          const filename = `${safeTitle}.${directFileInfo.ext}`;
+          return jsonResponse({
+            success: true,
+            filename,
+            isBinary: true,
+            mimeType: directFileInfo.mimeType,
+            base64,
+            title,
+          });
+        }
 
         const lessonResp = await fetch(lessonUrl, {
           headers: {
@@ -524,10 +646,57 @@ export default {
 
         const lessonHtml = await lessonResp.text();
 
-        // Search for iframe material
-        const iframeMatch = lessonHtml.match(/<iframe\s+[^>]*src=["']([^"']+)["']/i);
-        let finalHtml = '';
+        // 1. Search for binary download links or iframe/embed/object
+        let targetBinaryUrl = null;
 
+        const iframeMatch = lessonHtml.match(/<(?:iframe|embed|object)\s+[^>]*(?:src|data)=["']([^"']+)["']/i);
+        if (iframeMatch && iframeMatch[1] && iframeMatch[1] !== 'about:blank') {
+          const rawSrc = iframeMatch[1];
+          const fullSrc = rawSrc.startsWith('http') ? rawSrc : `${LMS_ORIGIN}${rawSrc}`;
+          const fInfo = getFileInfo(fullSrc);
+          if (fInfo.isBinary) {
+            targetBinaryUrl = fullSrc;
+          }
+        }
+
+        if (!targetBinaryUrl) {
+          const linkMatch = lessonHtml.match(/href=["']([^"']*(?:\/files\/lessons\/materials\/|\.(?:pdf|pptx|ppt|docx|doc|zip|rar))[^"']*)["']/i);
+          if (linkMatch && linkMatch[1]) {
+            const rawLink = linkMatch[1];
+            targetBinaryUrl = rawLink.startsWith('http') ? rawLink : `${LMS_ORIGIN}${rawLink}`;
+          }
+        }
+
+        // If a binary file (PDF/PPTX/etc.) is found, fetch it as binary ArrayBuffer!
+        if (targetBinaryUrl) {
+          const fInfo = getFileInfo(targetBinaryUrl);
+          const binResp = await fetch(targetBinaryUrl, {
+            headers: {
+              'Cookie': session.cookies,
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            },
+          });
+          const arrayBuffer = await binResp.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = '';
+          const chunkSize = 8192;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+          }
+          const base64 = btoa(binary);
+          const filename = `${safeTitle}.${fInfo.ext}`;
+          return jsonResponse({
+            success: true,
+            filename,
+            isBinary: true,
+            mimeType: fInfo.mimeType,
+            base64,
+            title,
+          });
+        }
+
+        // 2. Otherwise handle as HTML (iframe content or direct page content)
+        let finalHtml = '';
         if (iframeMatch && iframeMatch[1] && iframeMatch[1] !== 'about:blank') {
           const iframeSrc = iframeMatch[1];
           const iframeUrl = iframeSrc.startsWith('http') ? iframeSrc : `${LMS_ORIGIN}${iframeSrc}`;
@@ -544,12 +713,12 @@ export default {
           finalHtml = cleanHtmlContent(lessonHtml, title);
         }
 
-        const safeTitle = title.replace(/[^a-zA-Z0-9\s\-_]/g, '').replace(/\s+/g, '_').substring(0, 60);
         const filename = `${safeTitle}.html`;
 
         return jsonResponse({
           success: true,
           filename,
+          isBinary: false,
           content: finalHtml,
           title,
         });

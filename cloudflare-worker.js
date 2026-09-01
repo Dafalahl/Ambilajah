@@ -531,32 +531,42 @@ export default {
           return jsonResponse({ error: 'Tidak ada course ditemukan. Pastikan akunmu sudah terdaftar di kelas.' }, 404);
         }
 
-        // Authorize & verify in parallel that user is ACTUALLY enrolled ("Enrolled via Class Assignment")
+        // Authorize & verify in parallel that user is ACTUALLY enrolled ("Enrolled via Class Assignment" / "Start Learning")
         const checkResults = await Promise.all(
           courses.map(async (course) => {
             try {
-              const learnUrl = course.url.endsWith('/learn') ? course.url : `${course.url.replace(/\/+$/, '')}/learn`;
-              const chkResp = await fetch(learnUrl, {
+              // Fetch course overview page (e.g. /courses/27)
+              const chkResp = await fetch(course.url, {
                 headers: {
                   'Cookie': session.cookies,
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                 },
-                redirect: 'manual',
+                redirect: 'follow',
               });
 
-              // If redirected (302/301/303) away from /learn or forbidden, student is NOT enrolled
               if (chkResp.status !== 200) return null;
 
               const txt = await chkResp.text();
-              const isBlocked = txt.includes('Enroll in Course') || txt.includes('belum terdaftar') || txt.includes('tidak memiliki akses') || txt.includes('Daftar Sekarang');
-              const isEnrolled = txt.includes('Enrolled via Class Assignment') || txt.includes('Enrolled') || /\/lessons\/\d+/i.test(txt);
 
-              if (isEnrolled && !isBlocked) {
+              // If course page has "Enroll in Course", user is NOT enrolled
+              if (txt.includes('Enroll in Course') || (txt.includes('Enroll Now') && !txt.includes('Enrolled'))) {
+                return null;
+              }
+
+              // If course page has "Enrolled via Class Assignment", "Start Learning", "Enrolled", or has lessons
+              const isEnrolled = txt.includes('Enrolled via Class Assignment')
+                              || txt.includes('Enrolled via Class')
+                              || txt.includes('Start Learning')
+                              || txt.includes('Enrolled')
+                              || txt.includes('Lihat Materi')
+                              || /\/lessons\/\d+/i.test(txt);
+
+              if (isEnrolled) {
                 return course;
               }
               return null;
             } catch (e) {
-              return null;
+              return course; // fallback to include if check fails
             }
           })
         );

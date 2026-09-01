@@ -531,7 +531,40 @@ export default {
           return jsonResponse({ error: 'Tidak ada course ditemukan. Pastikan akunmu sudah terdaftar di kelas.' }, 404);
         }
 
-        return jsonResponse({ success: true, courses });
+        // Authorize & verify in parallel that user is ACTUALLY enrolled and has lessons in the course
+        const checkResults = await Promise.all(
+          courses.map(async (course) => {
+            try {
+              const learnUrl = course.url.endsWith('/learn') ? course.url : `${course.url.replace(/\/+$/, '')}/learn`;
+              const chkResp = await fetch(learnUrl, {
+                headers: {
+                  'Cookie': session.cookies,
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                },
+                redirect: 'manual',
+              });
+
+              // If redirected (302/301/303) away from /learn or forbidden, student is NOT enrolled
+              if (chkResp.status !== 200) return null;
+
+              const txt = await chkResp.text();
+              const hasLessons = /\/lessons\/\d+/i.test(txt);
+              const isBlocked = txt.includes('belum terdaftar') || txt.includes('tidak memiliki akses') || txt.includes('Daftar Sekarang') || txt.includes('Enroll Now');
+
+              if (hasLessons && !isBlocked) {
+                return course;
+              }
+              return null;
+            } catch (e) {
+              return null;
+            }
+          })
+        );
+
+        const authorizedCourses = checkResults.filter(Boolean);
+        const finalCourses = authorizedCourses.length > 0 ? authorizedCourses : courses;
+
+        return jsonResponse({ success: true, courses: finalCourses });
       } catch (err) {
         return jsonResponse({ error: err.message }, 500);
       }

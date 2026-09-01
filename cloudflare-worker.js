@@ -401,8 +401,10 @@ export default {
         const session = await decryptSession(sessionToken);
         if (!session) return jsonResponse({ error: 'Belum login atau sesi telah berakhir.' }, 401);
 
-        const routes = ['/courses', '/course', '/dashboard', '/home'];
+        // Prioritize student dashboard & enrolled courses routes first
+        const routes = ['/dashboard', '/home', '/my-courses', '/user/courses', '/courses'];
         let html = '';
+        let matchedRoute = '';
 
         for (const r of routes) {
           try {
@@ -432,8 +434,16 @@ export default {
               const txt = await resp.text();
               const isLoginPage = txt.includes('type="password"') || txt.includes('name="password"') || (txt.includes('id="password"') && txt.includes('/login'));
               if (!isLoginPage && txt.length > 500) {
-                html = txt;
-                break;
+                // If it's dashboard/home, it has the student's enrolled courses!
+                if (r === '/dashboard' || r === '/home' || r === '/my-courses') {
+                  html = txt;
+                  matchedRoute = r;
+                  break;
+                }
+                if (!html) {
+                  html = txt;
+                  matchedRoute = r;
+                }
               }
             }
           } catch (e) {
@@ -448,6 +458,14 @@ export default {
         const courses = [];
         const seen = new Set();
 
+        // Helper to clean course title from category tags & action text
+        const cleanCourseName = (raw) => {
+          let name = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          name = name.replace(/\s*(Start Quiz|Take Quiz|Lihat Materi|Lihat Mata Kuliah|Lanjutkan|Free Preview|\d+%\s*|\d+\s*lessons?|\d+\s*materi).*$/i, '').trim();
+          name = name.replace(/\s*(Programming|Networking|Multimedia|Sistem Informasi|Teknik Informatika|Sains Data|Umum|Wajib|Pilihan)$/i, '').trim();
+          return name;
+        };
+
         // Strategy 1: Match structured Cards with title outside <a> tag
         const cardRegex = /<div\s+[^>]*class=["']([^"']*(?:card|course-item|course-box|course)[^"']*)["'][^>]*>([\s\S]*?)<\/div\s*>/gi;
         let cm;
@@ -461,13 +479,18 @@ export default {
           const cleanHref = href.replace(/\/+$/, '');
           if (cleanHref.endsWith('/courses') || cleanHref.endsWith('/course') || cleanHref.endsWith('/dashboard')) continue;
 
+          // If on general courses catalog, only include courses that the user is actually enrolled in
+          if (matchedRoute === '/courses' && (cardBlock.includes('Daftar Sekarang') || cardBlock.includes('Enroll Now')) && !cardBlock.includes('Lihat Materi') && !cardBlock.includes('/learn')) {
+            continue;
+          }
+
           const fullUrl = href.startsWith('http') ? href : `${LMS_ORIGIN}${href}`;
           if (seen.has(fullUrl)) continue;
 
           const headingMatch = cardBlock.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i)
                             || cardBlock.match(/class=["'][^"']*title[^"']*["'][^>]*>([\s\S]*?)<\//i);
-          let title = headingMatch ? headingMatch[1].replace(/<[^>]+>/g, ' ').trim() : '';
-          title = title.replace(/\s+/g, ' ').trim();
+          let rawTitle = headingMatch ? headingMatch[1] : '';
+          let title = cleanCourseName(rawTitle);
 
           if (title && title.length >= 2 && !title.toLowerCase().includes('courses') && !title.toLowerCase().includes('dashboard')) {
             seen.add(fullUrl);
@@ -495,8 +518,7 @@ export default {
 
           const titleAttr = (attrs.match(/title=["']([^"']+)["']/i) || [])[1] || '';
           const heading = (inner.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i) || [])[1] || '';
-          let name = (heading || titleAttr || inner).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          name = name.replace(/\s*(Start Quiz|Take Quiz|Lihat Materi|Lihat Mata Kuliah|Free Preview|\d+%\s*|\d+\s*lessons?|\d+\s*materi).*$/i, '').trim();
+          let name = cleanCourseName(heading || titleAttr || inner);
 
           if (name && name.length >= 2 && !name.toLowerCase().includes('courses') && !name.toLowerCase().includes('dashboard')) {
             seen.add(fullUrl);

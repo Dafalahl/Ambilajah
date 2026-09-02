@@ -1114,72 +1114,114 @@ body {
     background-size: 36px 36px !important;
   }
 
-  /* 2. Responsive & Compact Navbar */
+  /* 2. Responsive & Compact Navbar (Optimized for Logged In & Logged Out States) */
   .app-header {
-    height: 64px !important;
-    background: rgba(9, 13, 22, 0.96) !important;
+    height: 60px !important;
+    background: rgba(9, 13, 22, 0.97) !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     border-bottom: 1px solid rgba(16, 185, 129, 0.25) !important;
   }
 
   .header-container {
-    padding: 0 14px !important;
-    gap: 10px !important;
+    padding: 0 12px !important;
+    gap: 8px !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    width: 100% !important;
+    max-width: 100% !important;
   }
 
   .logo-wrapper {
-    gap: 10px !important;
+    gap: 8px !important;
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: center !important;
   }
 
   .logo-badge {
-    width: 38px !important;
-    height: 38px !important;
+    width: 34px !important;
+    height: 34px !important;
     filter: none !important;
   }
 
   .brand-title {
-    font-size: 1.22rem !important;
+    font-size: 1.15rem !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.3px !important;
   }
 
   .nav-actions {
-    gap: 8px !important;
+    gap: 6px !important;
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: center !important;
   }
 
   .btn-donate {
-    padding: 6px 12px !important;
-    font-size: 0.82rem !important;
+    padding: 6px 10px !important;
+    font-size: 0.8rem !important;
+    height: 34px !important;
     border-radius: var(--radius-full) !important;
     box-shadow: none !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
   }
 
   #user-controls {
     gap: 6px !important;
+    display: flex !important;
+    align-items: center !important;
   }
 
   .user-pill {
-    padding: 5px 10px !important;
-    gap: 6px !important;
+    padding: 4px 8px !important;
+    height: 34px !important;
+    gap: 5px !important;
     background: rgba(255, 255, 255, 0.08) !important;
-    border-color: rgba(255, 255, 255, 0.15) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: var(--radius-full) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    max-width: 100px !important;
+    box-sizing: border-box !important;
   }
 
   .user-dot {
-    width: 8px !important;
-    height: 8px !important;
+    width: 7px !important;
+    height: 7px !important;
+    flex-shrink: 0 !important;
   }
 
   .user-npm {
-    font-size: 0.8rem !important;
-    max-width: 100px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: 0.78rem !important;
+    max-width: 75px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-weight: 700 !important;
   }
 
   .btn-logout {
-    padding: 6px 10px !important;
+    padding: 0 !important;
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
     min-height: 34px !important;
+    border-radius: 8px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  }
+
+  .btn-logout svg {
+    width: 18px !important;
+    height: 18px !important;
   }
 
   .logout-text {
@@ -1457,21 +1499,54 @@ body {
 
 @media (max-width: 480px) {
   .header-container {
-    padding: 0 10px !important;
+    padding: 0 8px !important;
+    gap: 6px !important;
+  }
+
+  .logo-wrapper {
+    gap: 6px !important;
+  }
+
+  .logo-badge {
+    width: 30px !important;
+    height: 30px !important;
   }
 
   .brand-title {
-    font-size: 1.1rem !important;
+    font-size: 1.05rem !important;
+  }
+
+  .nav-actions {
+    gap: 5px !important;
   }
 
   .btn-donate {
     padding: 5px 8px !important;
     font-size: 0.78rem !important;
+    height: 32px !important;
+  }
+
+  .btn-donate .donate-text {
+    display: none !important;
+  }
+
+  .user-pill {
+    padding: 4px 6px !important;
+    height: 32px !important;
+    max-width: 82px !important;
+    gap: 4px !important;
   }
 
   .user-npm {
-    max-width: 75px !important;
+    max-width: 58px !important;
     font-size: 0.75rem !important;
+  }
+
+  .btn-logout {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
   }
 
   .card-login {
@@ -1488,5 +1563,24 @@ body {
     width: 32px !important;
     height: 32px !important;
     justify-content: center !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .header-container {
+    padding: 0 6px !important;
+  }
+
+  .brand-title {
+    font-size: 0.95rem !important;
+  }
+
+  .user-pill {
+    max-width: 68px !important;
+  }
+
+  .user-npm {
+    max-width: 46px !important;
+    font-size: 0.7rem !important;
   }
 }

@@ -161,6 +161,12 @@ function getFileInfo(url = '', contentType = '') {
   if (cleanUrl.endsWith('.doc') || contentType.includes('msword')) {
     return { ext: 'doc', mimeType: 'application/msword', isBinary: true };
   }
+  if (cleanUrl.endsWith('.xlsx') || contentType.includes('spreadsheetml')) {
+    return { ext: 'xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', isBinary: true };
+  }
+  if (cleanUrl.endsWith('.xls') || contentType.includes('ms-excel')) {
+    return { ext: 'xls', mimeType: 'application/vnd.ms-excel', isBinary: true };
+  }
   if (cleanUrl.endsWith('.zip') || contentType.includes('zip')) {
     return { ext: 'zip', mimeType: 'application/zip', isBinary: true };
   }
@@ -585,6 +591,143 @@ export default {
         title = title.replace(/^(\d+[\s._\-–—:]*)+/g, '').trim() || title;
         const safeTitle = title.replace(/[^a-zA-Z0-9\s\-_]/g, '').replace(/\s+/g, '_').substring(0, 70);
 
+        // Helper: convert ArrayBuffer to base64
+        const arrayBufferToBase64 = (arrayBuffer) => {
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = '';
+          const chunkSize = 8192;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+          }
+          return btoa(binary);
+        };
+
+        // Helper: detect Google Drive / Google Docs URL
+        const parseGoogleDriveUrl = (testUrl) => {
+          if (!testUrl) return null;
+          const m1 = testUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+          if (m1) return { type: 'drive', fileId: m1[1] };
+          const m2 = testUrl.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+          if (m2) return { type: 'drive', fileId: m2[1] };
+          const m3 = testUrl.match(/drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/);
+          if (m3) return { type: 'drive', fileId: m3[1] };
+          const m4 = testUrl.match(/docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]+)/);
+          if (m4) return { type: 'gdoc', fileId: m4[1] };
+          const m5 = testUrl.match(/docs\.google\.com\/presentation\/d\/([a-zA-Z0-9_-]+)/);
+          if (m5) return { type: 'gslides', fileId: m5[1] };
+          const m6 = testUrl.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+          if (m6) return { type: 'gsheets', fileId: m6[1] };
+          return null;
+        };
+
+        // Helper: download from Google Drive
+        const downloadGoogleDrive = async (driveInfo) => {
+          let downloadUrl, ext, mimeType;
+          switch (driveInfo.type) {
+            case 'drive':
+              downloadUrl = `https://drive.google.com/uc?export=download&id=${driveInfo.fileId}`;
+              break;
+            case 'gdoc':
+              downloadUrl = `https://docs.google.com/document/d/${driveInfo.fileId}/export?format=pdf`;
+              ext = 'pdf'; mimeType = 'application/pdf';
+              break;
+            case 'gslides':
+              downloadUrl = `https://docs.google.com/presentation/d/${driveInfo.fileId}/export/pptx`;
+              ext = 'pptx'; mimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+              break;
+            case 'gsheets':
+              downloadUrl = `https://docs.google.com/spreadsheets/d/${driveInfo.fileId}/export?format=xlsx`;
+              ext = 'xlsx'; mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+              break;
+            default:
+              downloadUrl = `https://drive.google.com/uc?export=download&id=${driveInfo.fileId}`;
+          }
+
+          const resp = await fetch(downloadUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+            redirect: 'follow',
+          });
+
+          const ab = await resp.arrayBuffer();
+          const ct = resp.headers.get('content-type') || '';
+
+          // Detect ext from response if not pre-set
+          if (!ext) {
+            const fInfo = getFileInfo(downloadUrl, ct);
+            ext = fInfo.ext;
+            mimeType = fInfo.mimeType;
+
+            // If response looks like HTML (Google Drive confirm page), try to parse confirm link
+            if (ext === 'html' && ab.byteLength < 200000) {
+              const htmlStr = new TextDecoder().decode(ab);
+              const confirmMatch = htmlStr.match(/href="(\/uc\?export=download[^"]+)"/);
+              if (confirmMatch) {
+                const confirmUrl = `https://drive.google.com${confirmMatch[1].replace(/&amp;/g, '&')}`;
+                const confirmResp = await fetch(confirmUrl, {
+                  headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                  redirect: 'follow',
+                });
+                const confirmAb = await confirmResp.arrayBuffer();
+                const confirmCt = confirmResp.headers.get('content-type') || '';
+                const confirmInfo = getFileInfo('', confirmCt);
+
+                // Try content-disposition for filename
+                const disp = confirmResp.headers.get('content-disposition') || '';
+                const fnMatch = disp.match(/filename[*]?=(?:UTF-8'')?["']?([^"';\n]+)/i);
+                if (fnMatch) {
+                  const origName = decodeURIComponent(fnMatch[1]).trim();
+                  const dotIdx = origName.lastIndexOf('.');
+                  if (dotIdx > 0) {
+                    ext = origName.substring(dotIdx + 1).toLowerCase();
+                    const eInfo = getFileInfo(`file.${ext}`);
+                    mimeType = eInfo.mimeType;
+                  }
+                } else if (confirmInfo.isBinary) {
+                  ext = confirmInfo.ext;
+                  mimeType = confirmInfo.mimeType;
+                }
+
+                return jsonResponse({
+                  success: true,
+                  filename: `${safeTitle}.${ext || 'bin'}`,
+                  isBinary: true,
+                  mimeType: mimeType || 'application/octet-stream',
+                  base64: arrayBufferToBase64(confirmAb),
+                  title,
+                });
+              }
+            }
+
+            // Try content-disposition
+            const disp = resp.headers.get('content-disposition') || '';
+            const fnMatch = disp.match(/filename[*]?=(?:UTF-8'')?["']?([^"';\n]+)/i);
+            if (fnMatch) {
+              const origName = decodeURIComponent(fnMatch[1]).trim();
+              const dotIdx = origName.lastIndexOf('.');
+              if (dotIdx > 0) {
+                ext = origName.substring(dotIdx + 1).toLowerCase();
+                const eInfo = getFileInfo(`file.${ext}`);
+                mimeType = eInfo.mimeType;
+              }
+            }
+          }
+
+          return jsonResponse({
+            success: true,
+            filename: `${safeTitle}.${ext || 'pdf'}`,
+            isBinary: true,
+            mimeType: mimeType || 'application/octet-stream',
+            base64: arrayBufferToBase64(ab),
+            title,
+          });
+        };
+
+        // === Check if lessonUrl is a Google Drive/Docs link ===
+        const driveInfo = parseGoogleDriveUrl(lessonUrl);
+        if (driveInfo) {
+          return await downloadGoogleDrive(driveInfo);
+        }
+
         // Check if lessonUrl directly targets a binary file
         const directFileInfo = getFileInfo(lessonUrl);
         if (directFileInfo.isBinary) {
@@ -594,14 +737,7 @@ export default {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             },
           });
-          const arrayBuffer = await fileResp.arrayBuffer();
-          const bytes = new Uint8Array(arrayBuffer);
-          let binary = '';
-          const chunkSize = 8192;
-          for (let i = 0; i < bytes.length; i += chunkSize) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-          }
-          const base64 = btoa(binary);
+          const base64 = arrayBufferToBase64(await fileResp.arrayBuffer());
           const filename = `${safeTitle}.${directFileInfo.ext}`;
           return jsonResponse({
             success: true,
@@ -621,23 +757,57 @@ export default {
           redirect: 'manual',
         });
 
+        // Check if redirect goes to Google Drive
+        if (lessonResp.status === 302 || lessonResp.status === 301) {
+          const loc = lessonResp.headers.get('location') || '';
+          const redirectDrive = parseGoogleDriveUrl(loc);
+          if (redirectDrive) {
+            return await downloadGoogleDrive(redirectDrive);
+          }
+        }
+
         const lessonHtml = await lessonResp.text();
 
-        // 1. Search for binary download links or iframe/embed/object
+        // 1. Search for ALL iframes/embeds/objects and file download links
         let targetBinaryUrl = null;
+        let bestIframeSrc = null;
+        let bestIframeSize = 0;
 
-        const iframeMatch = lessonHtml.match(/<(?:iframe|embed|object)\s+[^>]*(?:src|data)=["']([^"']+)["']/i);
-        if (iframeMatch && iframeMatch[1] && iframeMatch[1] !== 'about:blank') {
-          const rawSrc = iframeMatch[1];
+        // Find ALL iframe/embed/object sources
+        const iframeRegex = /<(?:iframe|embed|object)\s+[^>]*(?:src|data)=["']([^"']+)["']/gi;
+        let iframeM;
+        while ((iframeM = iframeRegex.exec(lessonHtml)) !== null) {
+          const rawSrc = iframeM[1];
+          if (rawSrc === 'about:blank') continue;
           const fullSrc = rawSrc.startsWith('http') ? rawSrc : `${LMS_ORIGIN}${rawSrc}`;
+
+          // Check if iframe points to Google Drive
+          const iframeDrive = parseGoogleDriveUrl(fullSrc);
+          if (iframeDrive) {
+            return await downloadGoogleDrive(iframeDrive);
+          }
+
           const fInfo = getFileInfo(fullSrc);
           if (fInfo.isBinary) {
             targetBinaryUrl = fullSrc;
+            break;
+          }
+          // Track largest iframe for HTML content extraction
+          if (!bestIframeSrc) bestIframeSrc = fullSrc;
+        }
+
+        // Check for Google Drive links in the page HTML
+        const gdriveRegex = /href=["']([^"']*(?:drive\.google\.com|docs\.google\.com)[^"']*)["']/gi;
+        let gm;
+        while ((gm = gdriveRegex.exec(lessonHtml)) !== null) {
+          const gDrive = parseGoogleDriveUrl(gm[1]);
+          if (gDrive) {
+            return await downloadGoogleDrive(gDrive);
           }
         }
 
         if (!targetBinaryUrl) {
-          const linkMatch = lessonHtml.match(/href=["']([^"']*(?:\/files\/lessons\/materials\/|\.(?:pdf|pptx|ppt|docx|doc|zip|rar))[^"']*)["']/i);
+          const linkMatch = lessonHtml.match(/href=["']([^"']*(?:\/files\/lessons\/materials\/|\.(?:pdf|pptx|ppt|docx|doc|xlsx|xls|zip|rar))[^"']*)["']/i);
           if (linkMatch && linkMatch[1]) {
             const rawLink = linkMatch[1];
             targetBinaryUrl = rawLink.startsWith('http') ? rawLink : `${LMS_ORIGIN}${rawLink}`;
@@ -653,14 +823,7 @@ export default {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             },
           });
-          const arrayBuffer = await binResp.arrayBuffer();
-          const bytes = new Uint8Array(arrayBuffer);
-          let binary = '';
-          const chunkSize = 8192;
-          for (let i = 0; i < bytes.length; i += chunkSize) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-          }
-          const base64 = btoa(binary);
+          const base64 = arrayBufferToBase64(await binResp.arrayBuffer());
           const filename = `${safeTitle}.${fInfo.ext}`;
           return jsonResponse({
             success: true,
@@ -674,26 +837,47 @@ export default {
 
         // 2. Otherwise handle as HTML (iframe content or direct page content)
         let finalHtml = '';
-        if (iframeMatch && iframeMatch[1] && iframeMatch[1] !== 'about:blank') {
-          const iframeSrc = iframeMatch[1];
-          const iframeUrl = iframeSrc.startsWith('http') ? iframeSrc : `${LMS_ORIGIN}${iframeSrc}`;
-          const iframeResp = await fetch(iframeUrl, {
-            headers: {
-              'Cookie': session.cookies,
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-            },
-            redirect: 'manual',
-          });
-          const rawIframeHtml = await iframeResp.text();
-
-          // Calculate base directory URL for slide assets (images, CSS, JS frameworks)
-          let materialBaseUrl = LMS_ORIGIN;
-          const lastSlash = iframeUrl.lastIndexOf('/');
-          if (lastSlash !== -1) {
-            materialBaseUrl = iframeUrl.substring(0, lastSlash + 1);
+        if (bestIframeSrc) {
+          // Fetch ALL iframes and use the one with the most content
+          const allIframeSources = [];
+          const iframeRegex2 = /<(?:iframe|embed|object)\s+[^>]*(?:src|data)=["']([^"']+)["']/gi;
+          let im2;
+          while ((im2 = iframeRegex2.exec(lessonHtml)) !== null) {
+            if (im2[1] !== 'about:blank') {
+              const fullSrc = im2[1].startsWith('http') ? im2[1] : `${LMS_ORIGIN}${im2[1]}`;
+              allIframeSources.push(fullSrc);
+            }
           }
 
-          finalHtml = cleanHtmlContent(rawIframeHtml, title, materialBaseUrl);
+          let bestHtml = '';
+          let bestUrl = bestIframeSrc;
+          for (const iframeUrl of allIframeSources) {
+            try {
+              const iResp = await fetch(iframeUrl, {
+                headers: {
+                  'Cookie': session.cookies,
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                },
+                redirect: 'follow',
+              });
+              const iHtml = await iResp.text();
+              if (iHtml && iHtml.length > bestHtml.length) {
+                bestHtml = iHtml;
+                bestUrl = iframeUrl;
+              }
+            } catch (e) {
+              // Skip failed iframes
+            }
+          }
+
+          // Calculate base directory URL for slide assets
+          let materialBaseUrl = LMS_ORIGIN;
+          const lastSlash = bestUrl.lastIndexOf('/');
+          if (lastSlash !== -1) {
+            materialBaseUrl = bestUrl.substring(0, lastSlash + 1);
+          }
+
+          finalHtml = cleanHtmlContent(bestHtml, title, materialBaseUrl);
         } else {
           finalHtml = cleanHtmlContent(lessonHtml, title, LMS_ORIGIN);
         }

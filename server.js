@@ -16,7 +16,7 @@ try {
 }
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -47,58 +47,6 @@ function getSession(req) {
 // ============================================
 // API Routes
 // ============================================
-
-/**
- * GET /api/debug — Temporary diagnostic endpoint to check connectivity from server to LMS
- * Remove this after debugging is complete
- */
-app.get('/api/debug', async (req, res) => {
-  const axios = require('axios');
-  const cheerio = require('cheerio');
-  const { login, BASE_URL, PROXY_URL, LMS_ORIGIN } = require('./lib/auth');
-  const results = {};
-
-  const testUrls = [
-    'https://ambilajah-proxy.donateme.workers.dev/proxy/login',
-    'http://class.tiflab.my.id/login',
-  ];
-
-  for (const url of testUrls) {
-    try {
-      const resp = await axios.get(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        },
-        maxRedirects: 0,
-        validateStatus: () => true,
-        timeout: 10000,
-      });
-
-      const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
-      const $ = cheerio.load(body);
-      const token = $('input[name="_token"]').val() || $('meta[name="csrf-token"]').attr('content');
-
-      results[url] = {
-        status: resp.status,
-        hasToken: !!token,
-        tokenValue: token ? token.substring(0, 10) + '...' : null,
-        setCookiesCount: resp.headers['set-cookie'] ? resp.headers['set-cookie'].length : 0,
-        setCookies: resp.headers['set-cookie'] || [],
-        bodyLength: body.length,
-      };
-    } catch (err) {
-      results[url] = { error: err.message };
-    }
-  }
-
-  res.json({
-    serverTime: new Date().toISOString(),
-    vercel: !!process.env.VERCEL,
-    isCloud: !!(process.env.VERCEL || process.env.RENDER),
-    activeBaseUrl: BASE_URL,
-    results,
-  });
-});
 
 /**
  * POST /api/login

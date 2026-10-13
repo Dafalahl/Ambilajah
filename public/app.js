@@ -45,8 +45,11 @@ async function api(method, endpoint, body = null) {
     if (response.status === 401 && sessionToken) {
       sessionToken = null;
       currentUsername = '';
-      showView('login');
+      // Show login, hide dashboard (fix: showView was undefined)
+      document.getElementById('login-section').style.display = 'block';
+      document.getElementById('dashboard-section').style.display = 'none';
       document.getElementById('user-controls').style.display = 'none';
+      try { localStorage.removeItem('ambilajah_session'); } catch (e) {}
     }
     throw new Error(data.error || `HTTP ${response.status}`);
   }
@@ -485,59 +488,111 @@ async function triggerDirectDownload(index) {
   }
 }
 
-// --- Download All Materials Instantly ---
+// --- Download All Materials with Retry & Progress ---
+let downloadAllCancelled = false;
+
 async function downloadAllMaterials() {
   if (!currentMaterials || currentMaterials.length === 0) {
     showToast('warning', 'Tidak ada materi untuk didownload');
     return;
   }
 
+  downloadAllCancelled = false;
+
   const btn = document.getElementById('btn-download-all');
   const originalHtml = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;"></span> <span>Mendownload Semua...</span>';
-
+  const total = currentMaterials.length;
   let success = 0;
   let failed = 0;
+  let failedItems = [];
+
+  // Update button to show progress
+  const updateProgress = () => {
+    const done = success + failed;
+    btn.innerHTML = `<span class="spinner" style="width:14px;height:14px;"></span> <span>${done}/${total} (${success}✅ ${failed > 0 ? failed + '❌' : ''})</span>`;
+  };
+
+  btn.disabled = true;
+  updateProgress();
 
   for (let i = 0; i < currentMaterials.length; i++) {
-    try {
-      const material = currentMaterials[i];
-      const matBtn = document.getElementById(`btn-dl-${i}`);
-      if (matBtn) {
-        matBtn.disabled = true;
-        matBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;"></span>';
+    if (downloadAllCancelled) break;
+
+    const material = currentMaterials[i];
+    const matBtn = document.getElementById(`btn-dl-${i}`);
+    const matOriginalHtml = matBtn ? matBtn.innerHTML : '';
+
+    if (matBtn) {
+      matBtn.disabled = true;
+      matBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;"></span>';
+    }
+
+    // Try up to 2 attempts per material
+    let downloaded = false;
+    for (let attempt = 0; attempt < 2 && !downloaded; attempt++) {
+      try {
+        const encodedUrl = btoa(material.url);
+        const data = await api('POST', '/api/download', {
+          url: encodedUrl,
+          title: material.title,
+        });
+
+        // Trigger direct file download in browser
+        downloadFileHelper(data);
+        downloaded = true;
+        success++;
+
+        if (matBtn) {
+          matBtn.innerHTML = '<span>✅</span>';
+        }
+      } catch (error) {
+        if (attempt === 0) {
+          console.log(`[download-all] Retry ${material.title}: ${error.message}`);
+          // Wait a bit before retry
+          await new Promise(r => setTimeout(r, 1000));
+        } else {
+          failed++;
+          failedItems.push(material.title);
+          if (matBtn) {
+            matBtn.innerHTML = '<span>❌</span>';
+            matBtn.disabled = false;
+          }
+        }
       }
+    }
 
-      const encodedUrl = btoa(material.url);
-      const data = await api('POST', '/api/download', {
-        url: encodedUrl,
-        title: material.title,
-      });
+    updateProgress();
 
-      // Trigger direct file download in browser
-      downloadFileHelper(data);
-
-      if (matBtn) {
-        matBtn.innerHTML = '<span>✅</span>';
-      }
-      success++;
-
-      // Small delay between downloads to prevent browser blocking
-      await new Promise(r => setTimeout(r, 400));
-    } catch (error) {
-      failed++;
+    // Longer delay between downloads to prevent browser from blocking
+    // Browsers often block rapid sequential downloads
+    if (i < currentMaterials.length - 1) {
+      await new Promise(r => setTimeout(r, 800));
     }
   }
 
   btn.disabled = false;
   btn.innerHTML = originalHtml;
 
-  showToast(
-    failed === 0 ? 'success' : 'warning',
-    'Batch Download Selesai',
-    `${success} file berhasil diunduh ke komputermu.`
-  );
+  // Reset failed buttons after a delay
+  setTimeout(() => {
+    for (let i = 0; i < currentMaterials.length; i++) {
+      const matBtn = document.getElementById(`btn-dl-${i}`);
+      if (matBtn && (matBtn.innerHTML.includes('✅') || matBtn.innerHTML.includes('❌'))) {
+        matBtn.innerHTML = `
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          <span>Download</span>`;
+        matBtn.disabled = false;
+        matBtn.classList.remove('btn-secondary');
+        matBtn.classList.add('btn-primary');
+      }
+    }
+  }, 4000);
+
+  if (failed === 0) {
+    showToast('success', 'Batch Download Selesai!', `Semua ${success} file berhasil diunduh ke komputermu.`);
+  } else {
+    showToast('warning', 'Batch Download Selesai', `${success} berhasil, ${failed} gagal: ${failedItems.join(', ')}`);
+  }
 }
 
 // --- Direct New Tab Preview Logic ---
@@ -582,6 +637,7 @@ function openDonateModal() {
 }
 
 function closeDonateModal(event) {
+  // Guard for when called without event (e.g. from Escape key handler)
   if (event && event.target !== event.currentTarget) return;
   document.getElementById('donate-modal').style.display = 'none';
 }
@@ -616,7 +672,7 @@ function getTypeTag(type) {
 // --- Keyboard Shortcuts ---
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    closeDonateModal();
+    closeDonateModal(); // Now safe: guard handles undefined event
   }
 });
 

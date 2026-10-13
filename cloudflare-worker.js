@@ -215,6 +215,7 @@ function cleanHtmlContent(html, title, baseUrl = LMS_ORIGIN) {
     .replace(/-ms-user-select\s*:\s*none\s*(!important)?;/gi, '-ms-user-select: text !important;');
 
   // 5. Inject guaranteed selection styles & authoritative capture-phase event unblocker
+  const isSlideDeck = cleaned.includes('class="reveal"') || cleaned.includes("class='reveal'") || cleaned.includes('presentation-container') || cleaned.includes('class="slide"') || cleaned.includes("class='slide'");
   const cleanHeadInject = `
   <style>
     *, *::before, *::after {
@@ -223,6 +224,12 @@ function cleanHtmlContent(html, title, baseUrl = LMS_ORIGIN) {
       -ms-user-select: text !important;
       user-select: text !important;
       -webkit-touch-callout: default !important;
+    }
+    html, body {
+      -webkit-user-select: text !important;
+      -moz-user-select: text !important;
+      user-select: text !important;
+      ${isSlideDeck ? 'width: 100% !important; height: 100% !important; overflow: hidden !important; margin: 0 !important; padding: 0 !important;' : 'overflow-x: hidden; overflow-y: auto !important;'}
     }
     button, input, select, textarea, a, .btn, .control-btn, .next-btn, .prev-btn, [role="button"], [onclick], .navigate-left, .navigate-right, .navigate-up, .navigate-down, .controls button {
       pointer-events: auto !important;
@@ -482,11 +489,23 @@ export default {
 
               if (!isEnrolled) return null;
 
-              // Extract clean course title from heading or title tag
-              const hMatch = txt.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i) || txt.match(/<title>([\s\S]*?)<\/title>/i);
+              // Extract clean course title from overview page /courses/:id if needed
+              let overviewTxt = txt;
+              if (course.url.includes('/learn')) {
+                try {
+                  const overviewResp = await fetch(`${LMS_ORIGIN}/courses/${course.id}`, { headers: fetchHeaders, redirect: 'follow' });
+                  if (overviewResp.status === 200) {
+                    overviewTxt = await overviewResp.text();
+                  }
+                } catch (e) {}
+              }
+
+              const hMatch = overviewTxt.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i) || overviewTxt.match(/<title>([\s\S]*?)<\/title>/i);
               if (hMatch) {
                 const parsedTitle = cleanCourseName(hMatch[1]);
-                if (parsedTitle && parsedTitle.length >= 2 && !parsedTitle.toLowerCase().includes('course') && !parsedTitle.toLowerCase().includes('dashboard')) {
+                const lower = parsedTitle.toLowerCase();
+                const isGeneric = lower.includes('course') || lower.includes('dashboard') || lower.includes('learning mode') || lower.includes('session expired') || lower.includes('tiflab');
+                if (parsedTitle && parsedTitle.length >= 2 && !isGeneric) {
                   course.name = parsedTitle;
                 }
               }
@@ -778,7 +797,7 @@ export default {
         let iframeM;
         while ((iframeM = iframeRegex.exec(lessonHtml)) !== null) {
           const rawSrc = iframeM[1];
-          if (rawSrc === 'about:blank') continue;
+          if (!rawSrc || rawSrc === 'about:blank' || rawSrc === 'undefined' || rawSrc.trim() === '') continue;
           const fullSrc = rawSrc.startsWith('http') ? rawSrc : `${LMS_ORIGIN}${rawSrc}`;
 
           // Check if iframe points to Google Drive
@@ -843,7 +862,7 @@ export default {
           const iframeRegex2 = /<(?:iframe|embed|object)\s+[^>]*(?:src|data)=["']([^"']+)["']/gi;
           let im2;
           while ((im2 = iframeRegex2.exec(lessonHtml)) !== null) {
-            if (im2[1] !== 'about:blank') {
+            if (im2[1] && im2[1] !== 'about:blank' && im2[1] !== 'undefined' && im2[1].trim() !== '') {
               const fullSrc = im2[1].startsWith('http') ? im2[1] : `${LMS_ORIGIN}${im2[1]}`;
               allIframeSources.push(fullSrc);
             }

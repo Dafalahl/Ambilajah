@@ -889,6 +889,8 @@ body {
 .donate-modal-body {
   padding: 24px 28px;
   background: var(--bg-main);
+  overflow-y: auto;
+  max-height: calc(92vh - 75px);
 }
 
 .donate-grid {

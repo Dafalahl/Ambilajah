@@ -403,6 +403,16 @@ function downloadFileHelper(data) {
 }
 
 function previewFileHelper(data) {
+  const ext = (data.filename || '').split('.').pop().toLowerCase();
+  const isOfficeDoc = ['pptx', 'ppt', 'docx', 'doc', 'xlsx', 'xls', 'zip', 'rar'].includes(ext);
+
+  if (isOfficeDoc) {
+    // Browsers cannot render PPTX/DOCX natively in a new tab; download it directly and notify user
+    downloadFileHelper(data);
+    showToast('info', 'File Diunduh Otomatis', `${data.filename} telah diunduh (format ${ext.toUpperCase()} dapat dibuka di aplikasi Office / Google Docs).`);
+    return;
+  }
+
   if (data.isBinary && (data.base64 || data.contentBase64)) {
     const b64 = data.base64 || data.contentBase64;
     const byteCharacters = atob(b64);
@@ -488,7 +498,7 @@ async function triggerDirectDownload(index) {
   }
 }
 
-// --- Download All Materials with Retry & Progress ---
+// --- Download All Materials as Single ZIP Archive ---
 let downloadAllCancelled = false;
 
 async function downloadAllMaterials() {
@@ -506,21 +516,24 @@ async function downloadAllMaterials() {
   let failed = 0;
   let failedItems = [];
 
+  // Check if JSZip is available
+  const hasZip = typeof JSZip !== 'undefined';
+  const zip = hasZip ? new JSZip() : null;
+
   // Update button to show progress
-  const updateProgress = () => {
+  const updateProgress = (phase = 'Mengumpulkan') => {
     const done = success + failed;
-    btn.innerHTML = `<span class="spinner" style="width:14px;height:14px;"></span> <span>${done}/${total} (${success}✅ ${failed > 0 ? failed + '❌' : ''})</span>`;
+    btn.innerHTML = `<span class="spinner" style="width:14px;height:14px;"></span> <span>${phase} (${done}/${total})</span>`;
   };
 
   btn.disabled = true;
-  updateProgress();
+  updateProgress('Mengumpulkan');
 
   for (let i = 0; i < currentMaterials.length; i++) {
     if (downloadAllCancelled) break;
 
     const material = currentMaterials[i];
     const matBtn = document.getElementById(`btn-dl-${i}`);
-    const matOriginalHtml = matBtn ? matBtn.innerHTML : '';
 
     if (matBtn) {
       matBtn.disabled = true;
@@ -537,8 +550,29 @@ async function downloadAllMaterials() {
           title: material.title,
         });
 
-        // Trigger direct file download in browser
-        downloadFileHelper(data);
+        if (zip) {
+          // Add file to ZIP bundle!
+          if (data.isBinary && (data.base64 || data.contentBase64)) {
+            const b64 = data.base64 || data.contentBase64;
+            const byteCharacters = atob(b64);
+            const byteArray = new Uint8Array(byteCharacters.length);
+            for (let j = 0; j < byteCharacters.length; j++) {
+              byteArray[j] = byteCharacters.charCodeAt(j);
+            }
+            zip.file(data.filename, byteArray);
+          } else if (data.content) {
+            zip.file(data.filename, data.content);
+          } else {
+            // Fetch file content if only filename returned
+            const resp = await fetch(`/api/downloads/${encodeURIComponent(data.filename)}`);
+            const buf = await resp.arrayBuffer();
+            zip.file(data.filename, buf);
+          }
+        } else {
+          // Fallback if JSZip is somehow not loaded
+          downloadFileHelper(data);
+        }
+
         downloaded = true;
         success++;
 
@@ -548,8 +582,7 @@ async function downloadAllMaterials() {
       } catch (error) {
         if (attempt === 0) {
           console.log(`[download-all] Retry ${material.title}: ${error.message}`);
-          // Wait a bit before retry
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise(r => setTimeout(r, 800));
         } else {
           failed++;
           failedItems.push(material.title);
@@ -561,19 +594,46 @@ async function downloadAllMaterials() {
       }
     }
 
-    updateProgress();
+    updateProgress('Mengumpulkan');
+  }
 
-    // Longer delay between downloads to prevent browser from blocking
-    // Browsers often block rapid sequential downloads
-    if (i < currentMaterials.length - 1) {
-      await new Promise(r => setTimeout(r, 800));
+  // If ZIP bundle is active and we have gathered files, package and trigger 1 single ZIP download!
+  if (zip && success > 0 && !downloadAllCancelled) {
+    btn.innerHTML = `<span class="spinner" style="width:14px;height:14px;"></span> <span>Mengemas ZIP (${success} file)...</span>`;
+    showToast('info', 'Mengemas ZIP', `Sedang mengompres ${success} materi ke dalam file ZIP...`);
+
+    try {
+      const zipBlob = await zip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 }
+      });
+
+      const safeCourse = (currentCourseName || 'Mata_Kuliah')
+        .replace(/[^a-zA-Z0-9\s\-_]/g, '')
+        .replace(/\s+/g, '_')
+        .substring(0, 60);
+      const zipFilename = `${safeCourse}_Semua_Materi.zip`;
+
+      const zipUrl = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = zipUrl;
+      link.download = zipFilename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(zipUrl), 4000);
+
+      showToast('success', 'ZIP Berhasil Diunduh! 📦', `Seluruh ${success} materi telah terunduh rapi dalam 1 file ZIP: ${zipFilename}`);
+    } catch (zipErr) {
+      showToast('error', 'Gagal Membuat ZIP', zipErr.message);
     }
   }
 
   btn.disabled = false;
   btn.innerHTML = originalHtml;
 
-  // Reset failed buttons after a delay
+  // Reset button status after delay
   setTimeout(() => {
     for (let i = 0; i < currentMaterials.length; i++) {
       const matBtn = document.getElementById(`btn-dl-${i}`);
@@ -588,10 +648,8 @@ async function downloadAllMaterials() {
     }
   }, 4000);
 
-  if (failed === 0) {
-    showToast('success', 'Batch Download Selesai!', `Semua ${success} file berhasil diunduh ke komputermu.`);
-  } else {
-    showToast('warning', 'Batch Download Selesai', `${success} berhasil, ${failed} gagal: ${failedItems.join(', ')}`);
+  if (failed > 0) {
+    showToast('warning', 'Beberapa Materi Gagal', `${failed} materi gagal diunduh: ${failedItems.join(', ')}`);
   }
 }
 

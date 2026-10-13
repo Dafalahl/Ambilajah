@@ -365,18 +365,7 @@ async function loadMaterials(courseUrl) {
 
 // --- DIRECT INSTANT DOWNLOAD FLOW ---
 function downloadFileHelper(data) {
-  // If native server streaming URL is available, use fast direct download!
-  const streamUrl = data.downloadUrl || (data.filename ? `/api/downloads/${encodeURIComponent(data.filename)}` : null);
-  if (streamUrl && (!data.content || data.isBinary)) {
-    const link = document.createElement('a');
-    link.href = streamUrl;
-    link.download = data.filename || 'download';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    return;
-  }
-
+  // In-memory Blob download: guarantees 100% reliable download on Vercel & serverless environments
   if (data.isBinary && (data.base64 || data.contentBase64)) {
     const b64 = data.base64 || data.contentBase64;
     const byteCharacters = atob(b64);
@@ -394,7 +383,22 @@ function downloadFileHelper(data) {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
-  } else if (data.content) {
+    return;
+  }
+
+  // Native server streaming fallback if available
+  const streamUrl = data.downloadUrl || (data.filename ? `/api/downloads/${encodeURIComponent(data.filename)}` : null);
+  if (streamUrl && !data.content) {
+    const link = document.createElement('a');
+    link.href = streamUrl;
+    link.download = data.filename || 'download';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
+
+  if (data.content) {
     const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
     const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -415,7 +419,24 @@ function downloadFileHelper(data) {
 }
 
 function previewFileHelper(data) {
-  // 1. If viewerUrl is available (e.g. fast standalone PPTX slide viewer), open it immediately!
+  // 1. If viewerContent is available (in-memory for Vercel/serverless), open as Blob immediately!
+  if (data.viewerContent) {
+    const blob = new Blob([data.viewerContent], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const newTab = window.open(blobUrl, '_blank');
+    if (!newTab) {
+      const tempLink = document.createElement('a');
+      tempLink.href = blobUrl;
+      tempLink.target = '_blank';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+    }
+    showToast('success', 'Slide Viewer Terbuka', 'Membuka slide viewer interaktif di tab baru.');
+    return;
+  }
+
+  // 2. If viewerUrl is available, open direct URL!
   if (data.viewerUrl) {
     const newTab = window.open(data.viewerUrl, '_blank');
     if (!newTab) {

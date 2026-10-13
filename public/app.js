@@ -365,7 +365,10 @@ async function loadMaterials(courseUrl) {
 
 // --- DIRECT INSTANT DOWNLOAD FLOW ---
 function downloadFileHelper(data) {
-  // In-memory Blob download: guarantees 100% reliable download on Vercel & serverless environments
+  // 1. Direct URL (LMS signed download link) or server streaming link
+  const targetUrl = data.directUrl || data.downloadUrl || (data.filename ? `/api/downloads/${encodeURIComponent(data.filename)}` : null);
+
+  // 2. In-memory Blob download for small binary files
   if (data.isBinary && (data.base64 || data.contentBase64)) {
     const b64 = data.base64 || data.contentBase64;
     const byteCharacters = atob(b64);
@@ -386,11 +389,9 @@ function downloadFileHelper(data) {
     return;
   }
 
-  // Native server streaming fallback if available
-  const streamUrl = data.downloadUrl || (data.filename ? `/api/downloads/${encodeURIComponent(data.filename)}` : null);
-  if (streamUrl && !data.content) {
+  if (targetUrl) {
     const link = document.createElement('a');
-    link.href = streamUrl;
+    link.href = targetUrl;
     link.download = data.filename || 'download';
     document.body.appendChild(link);
     link.click();
@@ -419,68 +420,17 @@ function downloadFileHelper(data) {
 }
 
 function previewFileHelper(data) {
-  // 1. If viewerContent is available (in-memory for Vercel/serverless), open as Blob immediately!
-  if (data.viewerContent) {
-    const blob = new Blob([data.viewerContent], { type: 'text/html;charset=utf-8' });
-    const blobUrl = URL.createObjectURL(blob);
-    const newTab = window.open(blobUrl, '_blank');
-    if (!newTab) {
-      const tempLink = document.createElement('a');
-      tempLink.href = blobUrl;
-      tempLink.target = '_blank';
-      document.body.appendChild(tempLink);
-      tempLink.click();
-      tempLink.remove();
-    }
-    showToast('success', 'Slide Viewer Terbuka', 'Membuka slide viewer interaktif di tab baru.');
-    return;
-  }
-
-  // 2. If viewerUrl is available, open direct URL!
-  if (data.viewerUrl) {
-    const newTab = window.open(data.viewerUrl, '_blank');
-    if (!newTab) {
-      const tempLink = document.createElement('a');
-      tempLink.href = data.viewerUrl;
-      tempLink.target = '_blank';
-      document.body.appendChild(tempLink);
-      tempLink.click();
-      tempLink.remove();
-    }
-    showToast('success', 'Slide Viewer Terbuka', 'Membuka slide viewer interaktif di tab baru.');
-    return;
-  }
-
   const ext = (data.filename || '').split('.').pop().toLowerCase();
   const isOfficeDoc = ['pptx', 'ppt', 'docx', 'doc', 'xlsx', 'xls', 'zip', 'rar'].includes(ext);
 
-  if (isOfficeDoc) {
-    // Browsers cannot render PPTX/DOCX natively in a new tab; download it directly and notify user
+  // For PPTX & Office documents: directly download without previewing!
+  if (isOfficeDoc || data.isBinary) {
     downloadFileHelper(data);
-    showToast('info', 'File Diunduh Otomatis', `${data.filename} telah diunduh (format ${ext.toUpperCase()} dapat dibuka di aplikasi Office / Google Docs).`);
+    showToast('info', 'File Diunduh Langsung', `${data.filename} langsung diunduh ke perangkat Anda.`);
     return;
   }
 
-  if (data.isBinary && (data.base64 || data.contentBase64)) {
-    const b64 = data.base64 || data.contentBase64;
-    const byteCharacters = atob(b64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray], { type: data.mimeType || 'application/pdf' });
-    const blobUrl = URL.createObjectURL(blob);
-    const newTab = window.open(blobUrl, '_blank');
-    if (!newTab) {
-      const tempLink = document.createElement('a');
-      tempLink.href = blobUrl;
-      tempLink.target = '_blank';
-      document.body.appendChild(tempLink);
-      tempLink.click();
-      tempLink.remove();
-    }
-  } else if (data.content) {
+  if (data.content) {
     const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
     const blobUrl = URL.createObjectURL(blob);
     const newTab = window.open(blobUrl, '_blank');
@@ -492,17 +442,18 @@ function previewFileHelper(data) {
       tempLink.click();
       tempLink.remove();
     }
-  } else {
-    const cleanFileUrl = `/api/downloads/${encodeURIComponent(data.filename)}`;
-    const newTab = window.open(cleanFileUrl, '_blank');
-    if (!newTab) {
-      const tempLink = document.createElement('a');
-      tempLink.href = cleanFileUrl;
-      tempLink.target = '_blank';
-      document.body.appendChild(tempLink);
-      tempLink.click();
-      tempLink.remove();
-    }
+    return;
+  }
+
+  const cleanFileUrl = data.downloadUrl || `/api/downloads/${encodeURIComponent(data.filename)}`;
+  const newTab = window.open(cleanFileUrl, '_blank');
+  if (!newTab) {
+    const tempLink = document.createElement('a');
+    tempLink.href = cleanFileUrl;
+    tempLink.target = '_blank';
+    document.body.appendChild(tempLink);
+    tempLink.click();
+    tempLink.remove();
   }
 }
 

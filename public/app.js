@@ -363,52 +363,22 @@ async function loadMaterials(courseUrl) {
   }
 }
 
-// --- CLIENT-SIDE SLIDE ENHANCER (Guaranteed Dual-Mode & Fragment Unblocking across Vercel & Proxies) ---
+// --- CLIENT-SIDE SLIDE FIX (Guaranteed Fragment Unblocking across Vercel & Proxies) ---
 function enhanceSlideHtml(html, title = 'Slide Materi') {
   if (!html || typeof html !== 'string') return html;
 
   const isSlideDeck = html.includes('reveal') || html.includes('slides') || html.includes('presentation-container') || html.includes('#presentationContainer') || html.includes('class="slide"');
   if (!isSlideDeck) return html;
 
-  // Prevent duplicate toolbar or style injection
-  if (html.includes('id="ambilajah-slide-toolbar"')) return html;
+  // Remove top toolbar if present in HTML
+  let patched = html.replace(/<!-- AmbilAjah Slide Toolbar -->[\s\S]*?<\/div>\s*<\/div>/gi, '');
+  patched = patched.replace(/<div id="ambilajah-slide-toolbar"[\s\S]*?<\/div>\s*<\/div>/gi, '');
 
-  const safeTitle = (title || 'Slide Materi').replace(/["<>]/g, '');
+  // Prevent duplicate style injection
+  if (patched.includes('id="ambilajah-slide-fragment-unblocker"')) return patched;
 
-  const toolbarHtml = `
-  <!-- AmbilAjah Slide Toolbar -->
-  <div id="ambilajah-slide-toolbar">
-    <div class="tb-left">
-      <span class="tb-badge">AmbilAjah</span>
-      <span class="tb-title">${safeTitle}</span>
-    </div>
-    <div class="tb-right">
-      <div class="tb-mode-group">
-        <button id="btn-mode-presentation" class="tb-mode-btn active" onclick="setSlideMode('presentation')" title="Mode Presentasi (Slide Layar Penuh)">
-          <span>🖥</span> <span>Slide</span>
-        </button>
-        <button id="btn-mode-scroll" class="tb-mode-btn" onclick="setSlideMode('scroll')" title="Mode Scroll (Baca Mengalir seperti di Mobile)">
-          <span>📜</span> <span>Scroll (Baca Nyaman)</span>
-        </button>
-      </div>
-
-      <div id="slide-nav-controls" class="tb-nav-group">
-        <button id="tb-btn-prev" class="tb-btn" onclick="if(window.Reveal) Reveal.prev()" title="Slide Sebelumnya (Panah Kiri)">◀</button>
-        <span id="tb-slide-counter" class="tb-counter">1 / 1</span>
-        <button id="tb-btn-next" class="tb-btn" onclick="if(window.Reveal) Reveal.next()" title="Slide Berikutnya (Panah Kanan)">▶</button>
-        <select id="tb-slide-select" class="tb-select" onchange="if(window.Reveal) Reveal.slide(parseInt(this.value))">
-        </select>
-        <button class="tb-btn" onclick="if(window.Reveal) Reveal.toggleOverview()" title="Lihat Kisi Semua Slide (Esc)">
-          <span>☵</span> <span>Kisi</span>
-        </button>
-      </div>
-
-      <button class="tb-btn" onclick="toggleSlideFullscreen()" title="Layar Penuh">⛶</button>
-    </div>
-  </div>`;
-
-  const enhancerStyles = `
-  <style id="ambilajah-slide-enhancer-styles">
+  const fragmentUnblockerStyles = `
+  <style id="ambilajah-slide-fragment-unblocker">
     /* Guaranteed Fragment Unblocking - Prevents getting stuck on slide 11 */
     .reveal .slides section .fragment,
     .fragment {
@@ -416,177 +386,12 @@ function enhanceSlideHtml(html, title = 'Slide Materi') {
       visibility: visible !important;
       transform: none !important;
     }
-
-    /* Floating Toolbar */
-    #ambilajah-slide-toolbar {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 48px;
-      background: rgba(15, 23, 42, 0.92);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-      z-index: 999999;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 16px;
-      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    .tb-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-    .tb-badge { background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff; font-weight: 800; font-size: 11px; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 6px; text-transform: uppercase; flex-shrink: 0; }
-    .tb-title { color: #e2e8f0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
-    @media (max-width: 768px) { .tb-title { display: none; } }
-    .tb-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-    .tb-mode-group { display: flex; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 2px; }
-    .tb-mode-btn { background: transparent; border: none; color: #94a3b8; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.2s ease; }
-    .tb-mode-btn:hover { color: #fff; }
-    .tb-mode-btn.active { background: #2563eb; color: #fff; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4); }
-    .tb-nav-group { display: flex; align-items: center; gap: 6px; }
-    .tb-btn { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12); color: #e2e8f0; font-size: 12px; font-weight: 600; padding: 4px 9px; border-radius: 7px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; transition: all 0.15s ease; }
-    .tb-btn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; border-color: rgba(255, 255, 255, 0.25); }
-    .tb-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-    .tb-counter { background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 255, 255, 0.15); color: #60a5fa; font-weight: 700; font-size: 12px; padding: 3px 9px; border-radius: 7px; white-space: nowrap; min-width: 54px; text-align: center; }
-    .tb-select { background: #1e293b; border: 1px solid rgba(255, 255, 255, 0.15); color: #e2e8f0; font-size: 12px; font-weight: 500; padding: 4px 8px; border-radius: 7px; cursor: pointer; outline: none; max-width: 170px; }
-    @media (max-width: 640px) { .tb-select { display: none; } }
-
-    /* Continuous Scroll Mode (Baca Nyaman) */
-    html.mode-scroll, body.mode-scroll {
-      height: auto !important;
-      overflow-y: auto !important;
-      overflow-x: hidden !important;
-      background: #090d16 !important;
-      padding-top: 58px !important;
-    }
-    body.mode-scroll .reveal {
-      position: static !important;
-      width: 100% !important;
-      height: auto !important;
-      overflow: visible !important;
-      display: block !important;
-    }
-    body.mode-scroll .reveal .slides {
-      position: static !important;
-      width: 94% !important;
-      max-width: 1080px !important;
-      margin: 16px auto 60px !important;
-      height: auto !important;
-      display: flex !important;
-      flex-direction: column !important;
-      gap: 28px !important;
-      transform: none !important;
-      inset: auto !important;
-      zoom: 1 !important;
-    }
-    body.mode-scroll .reveal .slides section {
-      position: static !important;
-      opacity: 1 !important;
-      visibility: visible !important;
-      display: block !important;
-      transform: none !important;
-      width: 100% !important;
-      min-height: auto !important;
-      height: auto !important;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45) !important;
-      border-radius: 16px !important;
-      margin: 0 !important;
-      padding: 38px 46px 44px !important;
-      box-sizing: border-box !important;
-      overflow: visible !important;
-      border: 1px solid rgba(255, 255, 255, 0.08) !important;
-      background: #ffffff;
-    }
-    body.mode-scroll .reveal .slides section[data-background-color] {
-      background: var(--r-background-color, #0a1a30) !important;
-    }
-    body.mode-scroll .reveal .controls,
-    body.mode-scroll .reveal .progress,
-    body.mode-scroll .reveal .slide-number,
-    body.mode-scroll .reveal .backgrounds {
-      display: none !important;
-    }
-    body.mode-scroll #slide-nav-controls {
-      display: none !important;
-    }
   </style>`;
 
-  const enhancerScript = `
-  <script id="ambilajah-enhancer-script">
-    function setSlideMode(mode) {
-      var btnPres = document.getElementById('btn-mode-presentation');
-      var btnScroll = document.getElementById('btn-mode-scroll');
-      var navControls = document.getElementById('slide-nav-controls');
-      
-      if (mode === 'scroll') {
-        document.documentElement.classList.add('mode-scroll');
-        document.body.classList.add('mode-scroll');
-        if (btnPres) btnPres.classList.remove('active');
-        if (btnScroll) btnScroll.classList.add('active');
-        if (navControls) navControls.style.display = 'none';
-        window.scrollTo(0, 0);
-      } else {
-        document.documentElement.classList.remove('mode-scroll');
-        document.body.classList.remove('mode-scroll');
-        if (btnScroll) btnScroll.classList.remove('active');
-        if (btnPres) btnPres.classList.add('active');
-        if (navControls) navControls.style.display = 'flex';
-        if (window.Reveal) {
-          window.Reveal.layout();
-          updateToolbarSlideInfo();
-        }
-      }
-    }
-
-    function toggleSlideFullscreen() {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(function(){});
-      } else {
-        document.exitFullscreen().catch(function(){});
-      }
-    }
-
-    function updateToolbarSlideInfo() {
-      if (!window.Reveal) return;
-      var indices = Reveal.getIndices();
-      var total = Reveal.getTotalSlides ? Reveal.getTotalSlides() : (document.querySelectorAll('.reveal .slides > section').length || 1);
-      var current = (indices.h || 0) + 1;
-      
-      var counterEl = document.getElementById('tb-slide-counter');
-      if (counterEl) counterEl.textContent = current + ' / ' + total;
-
-      var selectEl = document.getElementById('tb-slide-select');
-      if (selectEl && selectEl.value != indices.h) {
-        selectEl.value = indices.h;
-      }
-
-      var btnPrev = document.getElementById('tb-btn-prev');
-      var btnNext = document.getElementById('tb-btn-next');
-      if (btnPrev) btnPrev.disabled = (current <= 1);
-      if (btnNext) btnNext.disabled = (current >= total);
-    }
-
-    function initSlideEnhancer() {
-      var sections = document.querySelectorAll('.reveal .slides > section');
-      var selectEl = document.getElementById('tb-slide-select');
-      if (selectEl && sections.length > 0) {
-        selectEl.innerHTML = '';
-        sections.forEach(function(sec, idx) {
-          var h = sec.querySelector('h1, h2, h3');
-          var titleText = h ? h.textContent.replace(/\\s+/g, ' ').trim() : ('Slide ' + (idx + 1));
-          if (titleText.length > 25) titleText = titleText.substring(0, 25) + '...';
-          var opt = document.createElement('option');
-          opt.value = idx;
-          opt.textContent = (idx + 1) + '. ' + titleText;
-          selectEl.appendChild(opt);
-        });
-      }
-
-      var configureReveal = function() {
+  const revealConfigScript = `
+  <script id="ambilajah-reveal-config">
+    (function() {
+      var cfg = function() {
         if (!window.Reveal) return false;
         try {
           Reveal.configure({
@@ -598,46 +403,28 @@ function enhanceSlideHtml(html, title = 'Slide Materi') {
             progress: true,
           });
         } catch(e) {}
-        Reveal.on('slidechanged', updateToolbarSlideInfo);
-        updateToolbarSlideInfo();
         return true;
       };
-
-      if (!configureReveal()) {
+      if (!cfg()) {
         var attempts = 0;
-        var intv = setInterval(function() {
+        var timer = setInterval(function() {
           attempts++;
-          if (configureReveal() || attempts > 30) {
-            clearInterval(intv);
-          }
+          if (cfg() || attempts > 30) clearInterval(timer);
         }, 100);
       }
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initSlideEnhancer);
-    } else {
-      initSlideEnhancer();
-    }
+    })();
   </script>`;
 
-  let patched = html;
   if (patched.includes('</head>')) {
-    patched = patched.replace('</head>', `${enhancerStyles}\n</head>`);
+    patched = patched.replace('</head>', `${fragmentUnblockerStyles}\n</head>`);
   } else {
-    patched = `${enhancerStyles}\n${patched}`;
-  }
-
-  if (patched.includes('<body')) {
-    patched = patched.replace(/<body([^>]*)>/i, `<body$1>\n${toolbarHtml}`);
-  } else {
-    patched = `${toolbarHtml}\n${patched}`;
+    patched = `${fragmentUnblockerStyles}\n${patched}`;
   }
 
   if (patched.includes('</body>')) {
-    patched = patched.replace('</body>', `${enhancerScript}\n</body>`);
+    patched = patched.replace('</body>', `${revealConfigScript}\n</body>`);
   } else {
-    patched = `${patched}\n${enhancerScript}`;
+    patched = `${patched}\n${revealConfigScript}`;
   }
 
   return patched;

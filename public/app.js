@@ -365,6 +365,18 @@ async function loadMaterials(courseUrl) {
 
 // --- DIRECT INSTANT DOWNLOAD FLOW ---
 function downloadFileHelper(data) {
+  // If native server streaming URL is available, use fast direct download!
+  const streamUrl = data.downloadUrl || (data.filename ? `/api/downloads/${encodeURIComponent(data.filename)}` : null);
+  if (streamUrl && (!data.content || data.isBinary)) {
+    const link = document.createElement('a');
+    link.href = streamUrl;
+    link.download = data.filename || 'download';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
+
   if (data.isBinary && (data.base64 || data.contentBase64)) {
     const b64 = data.base64 || data.contentBase64;
     const byteCharacters = atob(b64);
@@ -403,6 +415,21 @@ function downloadFileHelper(data) {
 }
 
 function previewFileHelper(data) {
+  // 1. If viewerUrl is available (e.g. fast standalone PPTX slide viewer), open it immediately!
+  if (data.viewerUrl) {
+    const newTab = window.open(data.viewerUrl, '_blank');
+    if (!newTab) {
+      const tempLink = document.createElement('a');
+      tempLink.href = data.viewerUrl;
+      tempLink.target = '_blank';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+    }
+    showToast('success', 'Slide Viewer Terbuka', 'Membuka slide viewer interaktif di tab baru.');
+    return;
+  }
+
   const ext = (data.filename || '').split('.').pop().toLowerCase();
   const isOfficeDoc = ['pptx', 'ppt', 'docx', 'doc', 'xlsx', 'xls', 'zip', 'rar'].includes(ext);
 

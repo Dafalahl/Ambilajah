@@ -437,61 +437,88 @@ function prepareMaterialData(data, fallbackTitle = '') {
   return data;
 }
 
+// Helper: Fast and memory-safe base64 to Blob converter in chunks
+function base64ToBlob(b64, mimeType = 'application/octet-stream') {
+  const sliceSize = 1024 * 1024;
+  const byteCharacters = atob(b64);
+  const byteArrays = [];
+  for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+    const slice = byteCharacters.slice(offset, offset + sliceSize);
+    const byteNumbers = new Uint8Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      byteNumbers[i] = slice.charCodeAt(i);
+    }
+    byteArrays.push(byteNumbers);
+  }
+  return new Blob(byteArrays, { type: mimeType });
+}
+
 // --- DIRECT INSTANT DOWNLOAD FLOW ---
 function downloadFileHelper(data) {
   prepareMaterialData(data);
 
-  // 1. Direct URL (LMS signed download link) or server streaming link
-  const targetUrl = data.directUrl || data.downloadUrl || (data.filename ? `/api/downloads/${encodeURIComponent(data.filename)}` : null);
-
-  // 2. In-memory Blob download for small binary files
-  if (data.isBinary && (data.base64 || data.contentBase64)) {
-    const b64 = data.base64 || data.contentBase64;
-    const byteCharacters = atob(b64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray], { type: data.mimeType || 'application/octet-stream' });
+  // 1. FIRST PRIORITY: In-memory HTML content (instant blob download without server roundtrip)
+  if (data.content && !data.isBinary) {
+    const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
     const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = blobUrl;
-    link.download = data.filename;
+    link.download = data.filename || 'materi.html';
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     return;
   }
 
-  if (targetUrl) {
+  // 2. SECOND PRIORITY: In-memory Binary data (base64 from serverless / worker)
+  if (data.isBinary && (data.base64 || data.contentBase64)) {
+    const b64 = data.base64 || data.contentBase64;
+    try {
+      const blob = base64ToBlob(b64, data.mimeType);
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = data.filename || 'download';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      return;
+    } catch (e) {
+      console.error('[download] Failed to create blob from base64:', e);
+    }
+  }
+
+  // 3. THIRD PRIORITY: Direct URL (proxy through HTTPS Cloudflare Worker on cloud to prevent mixed-content blocks)
+  if (data.directUrl) {
+    let downloadLinkUrl = data.directUrl;
+    if (window.location.protocol === 'https:' && downloadLinkUrl.startsWith('http:')) {
+      const cleanPath = downloadLinkUrl.replace(/^https?:\/\/[^\/]+\//, '');
+      downloadLinkUrl = `${CLOUD_API_BASE}/proxy/${cleanPath}`;
+    }
     const link = document.createElement('a');
-    link.href = targetUrl;
+    link.href = downloadLinkUrl;
+    link.download = data.filename || 'download';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
+
+  // 4. FOURTH PRIORITY: Local Dev server streaming (only on localhost)
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (isLocal && (data.downloadUrl || data.filename)) {
+    const streamUrl = data.downloadUrl || `/api/downloads/${encodeURIComponent(data.filename)}`;
+    const link = document.createElement('a');
+    link.href = streamUrl;
     link.download = data.filename || 'download';
     document.body.appendChild(link);
     link.click();
     link.remove();
     return;
-  }
-
-  if (data.content) {
-    const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
-    const blobUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = blobUrl;
-    link.download = data.filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
-  } else {
-    const downloadLink = document.createElement('a');
-    downloadLink.href = `/api/downloads/${encodeURIComponent(data.filename)}`;
-    downloadLink.download = data.filename;
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    downloadLink.remove();
   }
 }
 
@@ -508,6 +535,7 @@ function previewFileHelper(data) {
     return;
   }
 
+  // For HTML slides & documents: open in new tab via Blob
   if (data.content) {
     const blob = new Blob([data.content], { type: 'text/html;charset=utf-8' });
     const blobUrl = URL.createObjectURL(blob);
@@ -523,15 +551,20 @@ function previewFileHelper(data) {
     return;
   }
 
-  const cleanFileUrl = data.downloadUrl || `/api/downloads/${encodeURIComponent(data.filename)}`;
-  const newTab = window.open(cleanFileUrl, '_blank');
-  if (!newTab) {
-    const tempLink = document.createElement('a');
-    tempLink.href = cleanFileUrl;
-    tempLink.target = '_blank';
-    document.body.appendChild(tempLink);
-    tempLink.click();
-    tempLink.remove();
+  // Local server downloads fallback (only on localhost)
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (isLocal && (data.downloadUrl || data.filename)) {
+    const cleanFileUrl = data.downloadUrl || `/api/downloads/${encodeURIComponent(data.filename)}`;
+    const newTab = window.open(cleanFileUrl, '_blank');
+    if (!newTab) {
+      const tempLink = document.createElement('a');
+      tempLink.href = cleanFileUrl;
+      tempLink.target = '_blank';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      tempLink.remove();
+    }
+    return;
   }
 }
 
@@ -631,20 +664,27 @@ async function downloadAllMaterials() {
           // Add file to ZIP bundle!
           if (data.isBinary && (data.base64 || data.contentBase64)) {
             const b64 = data.base64 || data.contentBase64;
-            const byteCharacters = atob(b64);
-            const byteArray = new Uint8Array(byteCharacters.length);
-            for (let j = 0; j < byteCharacters.length; j++) {
-              byteArray[j] = byteCharacters.charCodeAt(j);
-            }
-            zip.file(data.filename, byteArray);
+            const blob = base64ToBlob(b64, data.mimeType);
+            zip.file(data.filename, blob);
           } else if (data.content) {
             prepareMaterialData(data, material.title);
             zip.file(data.filename, data.content);
-          } else {
-            // Fetch file content if only filename returned
-            const resp = await fetch(`/api/downloads/${encodeURIComponent(data.filename)}`);
+          } else if (data.directUrl) {
+            let fetchUrl = data.directUrl;
+            if (window.location.protocol === 'https:' && fetchUrl.startsWith('http:')) {
+              const cleanPath = fetchUrl.replace(/^https?:\/\/[^\/]+\//, '');
+              fetchUrl = `${CLOUD_API_BASE}/proxy/${cleanPath}`;
+            }
+            const resp = await fetch(fetchUrl);
             const buf = await resp.arrayBuffer();
             zip.file(data.filename, buf);
+          } else {
+            const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            if (isLocal && (data.downloadUrl || data.filename)) {
+              const resp = await fetch(data.downloadUrl || `/api/downloads/${encodeURIComponent(data.filename)}`);
+              const buf = await resp.arrayBuffer();
+              zip.file(data.filename, buf);
+            }
           }
         } else {
           // Fallback if JSZip is somehow not loaded
